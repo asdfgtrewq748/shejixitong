@@ -5,6 +5,7 @@ import boundaryRoutes from './routes/boundary.js';
 import boreholeRoutes from './routes/boreholes.js';
 import scoreRoutes from './routes/score.js';
 import designRoutes from './routes/design.js';
+import uploadRoutes from './routes/upload.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,6 +18,7 @@ app.use('/api/boundary', boundaryRoutes);
 app.use('/api/boreholes', boreholeRoutes);
 app.use('/api/score', scoreRoutes);
 app.use('/api/design', designRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // 健康检查
 app.get('/api/health', (_req, res) => {

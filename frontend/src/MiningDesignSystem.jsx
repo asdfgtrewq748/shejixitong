@@ -3,9 +3,10 @@ import {
   Layers, Upload, Database, Activity, ShieldCheck, DollarSign, Leaf, Cpu,
   Map as MapIcon, Settings, ChevronRight, Play, Save, FileText,
   Zap, Search, AlertCircle, CheckCircle, Crosshair, BarChart3, Wind, Droplets, Hammer,
-  Maximize2, Minimize2, Grid
+  Maximize2, Minimize2, Grid, FolderOpen
 } from 'lucide-react';
 import * as api from './api';
+import FileUploader from './FileUploader';
 
 const GlobalStyles = () => (
   <style>{`
@@ -83,6 +84,14 @@ const MiningDesignSystem = () => {
   const requestRef = useRef();
   const frameRef = useRef(0);
 
+  // 热力图/等值线/设计数据状态
+  const [scoreData, setScoreData] = useState(null); // { grids, contours, bounds }
+  const [designData, setDesignData] = useState(null); // { roadways, workingFaces, zones }
+  const [showHeatmap, setShowHeatmap] = useState(true);
+  const [showContours, setShowContours] = useState(true);
+  const [showDesign, setShowDesign] = useState(true);
+  const [displayDimension, setDisplayDimension] = useState('composite'); // safety | economic | env | composite
+
   // 画布交互状态
   const [scale, setScale] = useState(1);
   const [showGrid, setShowGrid] = useState(true);
@@ -96,6 +105,7 @@ const MiningDesignSystem = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBorehole, setSelectedBorehole] = useState(null);
+  const [importMode, setImportMode] = useState('file'); // 'file' | 'demo'
 
   const addLog = (msg, type = 'info') => {
     const time = new Date().toLocaleTimeString();
@@ -178,6 +188,26 @@ const MiningDesignSystem = () => {
     b.id.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // CSV 文件上传完成回调
+  const handleFileUploadComplete = async (data) => {
+    if (data.boundary && data.boundary.length > 0) {
+      setBoundary(data.boundary);
+      addLog(`采区边界已导入 [顶点: ${data.boundary.length}]`, 'success');
+    }
+    if (data.boreholes && data.boreholes.length > 0) {
+      // 重新计算评分
+      try {
+        const result = await api.calculateScore(weights);
+        setBoreholes(result.boreholes || data.boreholes);
+        addLog(`钻孔数据已导入并评分 [数量: ${result.boreholes?.length || data.boreholes.length}]`, 'success');
+        setActiveTab('analysis');
+      } catch (err) {
+        setBoreholes(data.boreholes);
+        addLog(`钻孔数据已导入 [数量: ${data.boreholes.length}]`, 'success');
+      }
+    }
+  };
+
   const handleImportBoundary = async () => {
     setIsLoading(true);
     addLog('正在解析 DXF 矢量数据...', 'loading');
@@ -219,16 +249,56 @@ const MiningDesignSystem = () => {
     setIsLoading(true);
     addLog('启动深度学习推理引擎 (ResNet-Geology)...', 'warning');
     try {
-      addLog('生成全区地质评分网格...', 'info');
-      // 调用后端生成设计方案
-      const design = await api.generateDesign('composite');
+      // 1. 获取高分辨率评分网格数据
+      addLog('生成全区地质评分网格 (50x50分辨率)...', 'info');
+      const scoreResult = await api.calculateScore(weights, 50);
+      setScoreData({
+        grids: scoreResult.grids,
+        contours: scoreResult.contours,
+        stats: scoreResult.stats
+      });
+      setBoreholes(scoreResult.boreholes || []);
+      addLog(`评分网格生成完成 (${Object.keys(scoreResult.grids || {}).length}个维度)`, 'success');
+
+      // 2. 调用后端生成设计方案
       addLog('运行遗传算法优化巷道路径...', 'info');
-      addLog(`最优采掘工程设计方案已生成 (整体得分: ${design.overallScore})`, 'success');
+      const design = await api.generateDesign(displayDimension);
+      setDesignData(design);
+      
+      const faceCount = design.workfaces?.length || 0;
+      const roadwayLen = design.mainRoadway?.length || 0;
+      const designScore = design.designScore?.overall || 0;
+      addLog(`最优采掘工程设计方案已生成`, 'success');
+      addLog(`  - 工作面: ${faceCount}个`, 'info');
+      addLog(`  - 主巷道长度: ${roadwayLen}m`, 'info');
+      addLog(`  - 分巷道数量: ${design.branchRoadways?.length || 0}条`, 'info');
+      addLog(`  - 整体评分: ${designScore}分`, 'info');
+      
       setActiveTab('synthesis');
     } catch (err) {
       addLog('设计生成失败: ' + err.message, 'warning');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // 颜色映射函数 - 将分数转换为热力图颜色
+  const scoreToColor = (score, alpha = 0.6) => {
+    // 红(低) -> 黄(中) -> 绿(高)
+    if (score < 50) {
+      // 红到黄
+      const t = score / 50;
+      const r = 239;
+      const g = Math.round(68 + (190 * t));
+      const b = 68;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    } else {
+      // 黄到绿
+      const t = (score - 50) / 50;
+      const r = Math.round(239 - (223 * t));
+      const g = Math.round(190 + (65 * t));
+      const b = Math.round(68 + (61 * t));
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
   };
 
@@ -277,10 +347,12 @@ const MiningDesignSystem = () => {
     }
 
     if (boundary.length === 0) {
+      ctx.restore()
       requestRef.current = requestAnimationFrame(animate)
       return
     }
 
+    // 创建边界裁剪区域
     ctx.save()
     ctx.beginPath()
     ctx.moveTo(boundary[0].x, boundary[0].y)
@@ -288,7 +360,70 @@ const MiningDesignSystem = () => {
     ctx.closePath()
     ctx.clip()
 
-    if (boreholes.length > 0) {
+    // ====== 热力图渲染 ======
+    if (showHeatmap && scoreData && scoreData.grids) {
+      const gridData = scoreData.grids[displayDimension]
+      
+      if (gridData && gridData.data && gridData.data.length > 0) {
+        const { data, minX, minY, stepX, stepY, resolution } = gridData
+        
+        ctx.globalAlpha = 0.7
+        for (let i = 0; i < data.length; i++) {
+          for (let j = 0; j < data[i].length; j++) {
+            const score = data[i][j]
+            if (score === null) continue
+            
+            const x = minX + j * stepX
+            const y = minY + i * stepY
+            
+            ctx.fillStyle = scoreToColor(score, 0.6)
+            ctx.fillRect(x, y, stepX + 1, stepY + 1)
+          }
+        }
+        ctx.globalAlpha = 1.0
+      }
+    }
+
+    // ====== 等值线渲染 ======
+    if (showContours && scoreData && scoreData.contours) {
+      const contourData = scoreData.contours[displayDimension]
+      
+      if (contourData && typeof contourData === 'object') {
+        const levelColors = {
+          30: '#ef4444',  // 红色 - 低分
+          40: '#f97316',  // 橙红
+          50: '#f59e0b',  // 橙色 - 中低
+          60: '#eab308',  // 黄色
+          70: '#84cc16',  // 黄绿 - 中高
+          80: '#22c55e',  // 绿色
+          90: '#10b981'   // 青绿 - 高分
+        }
+        
+        // contourData 是 { 30: [...segments], 50: [...], ... }
+        Object.entries(contourData).forEach(([level, segments]) => {
+          if (!segments || segments.length === 0) return
+          
+          ctx.strokeStyle = levelColors[level] || '#fff'
+          ctx.lineWidth = 2 / scale
+          ctx.shadowBlur = 4
+          ctx.shadowColor = levelColors[level] || '#fff'
+          
+          segments.forEach(seg => {
+            if (Array.isArray(seg) && seg.length === 2) {
+              // 格式: [[{x,y}, {x,y}], ...]
+              ctx.beginPath()
+              ctx.moveTo(seg[0].x, seg[0].y)
+              ctx.lineTo(seg[1].x, seg[1].y)
+              ctx.stroke()
+            }
+          })
+        })
+        ctx.shadowBlur = 0
+      }
+    }
+
+    // ====== 钻孔径向渐变 (如果没有热力图数据时显示) ======
+    if (!scoreData && boreholes.length > 0) {
       const totalWeight = weights.safety + weights.economic + weights.env
 
       boreholes.forEach((hole, idx) => {
@@ -312,57 +447,118 @@ const MiningDesignSystem = () => {
         ctx.arc(hole.x, hole.y, radius, 0, Math.PI * 2)
         ctx.fill()
       })
-    }
-
-    if (activeTab === 'synthesis' && boreholes.length > 0) {
       ctx.globalCompositeOperation = 'source-over'
-      const pathY = 300 + (weights.safety > 50 ? -50 : 50)
-
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'
-      ctx.lineWidth = 4
-      ctx.setLineDash([15, 10])
-      ctx.beginPath()
-      ctx.moveTo(boundary[0].x + 50, pathY)
-      ctx.lineTo(boundary[2].x - 50, pathY - 20)
-      ctx.stroke()
-
-      ctx.setLineDash([])
-      ctx.strokeStyle = '#00ffff'
-      ctx.lineWidth = 2
-      ctx.lineDashOffset = -time * 2
-      ctx.setLineDash([20, 30])
-      ctx.beginPath()
-      ctx.moveTo(boundary[0].x + 50, pathY)
-      ctx.lineTo(boundary[2].x - 50, pathY - 20)
-      ctx.stroke()
-      ctx.setLineDash([])
-
-      ctx.shadowBlur = 15
-      ctx.shadowColor = '#00ffff'
-      ctx.strokeStyle = '#00ffff'
-      ctx.fillStyle = 'rgba(0, 255, 255, 0.1)'
-      ctx.lineWidth = 2
-
-      const rectX = 300
-      const rectY = pathY - 40
-      ctx.fillRect(rectX, rectY, 150, 80)
-      ctx.strokeRect(rectX, rectY, 150, 80)
-
-      const scanY = rectY + (time % 80)
-      ctx.beginPath()
-      ctx.moveTo(rectX, scanY)
-      ctx.lineTo(rectX + 150, scanY)
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
-      ctx.stroke()
-
-      ctx.shadowBlur = 0
-      ctx.fillStyle = '#fff'
-      ctx.font = 'bold 14px "Courier New"'
-      ctx.fillText('OPTIMAL_FACE_01', 310, pathY - 50)
     }
 
-    ctx.restore()
+    // ====== 智能设计渲染 (巷道和工作面) ======
+    if (showDesign && designData && activeTab === 'synthesis') {
+      ctx.globalCompositeOperation = 'source-over'
+      
+      // 绘制主巷道
+      if (designData.mainRoadway && designData.mainRoadway.path && designData.mainRoadway.path.length > 1) {
+        const mainRoad = designData.mainRoadway.path
+        
+        // 巷道背景（宽度）
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)'
+        ctx.lineWidth = 12
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.beginPath()
+        ctx.moveTo(mainRoad[0].x, mainRoad[0].y)
+        mainRoad.forEach(p => ctx.lineTo(p.x, p.y))
+        ctx.stroke()
+        
+        // 巷道中线 - 动态流动效果
+        ctx.strokeStyle = '#00ffff'
+        ctx.lineWidth = 3
+        ctx.setLineDash([20, 15])
+        ctx.lineDashOffset = -time * 2
+        ctx.shadowBlur = 10
+        ctx.shadowColor = '#00ffff'
+        ctx.beginPath()
+        ctx.moveTo(mainRoad[0].x, mainRoad[0].y)
+        mainRoad.forEach(p => ctx.lineTo(p.x, p.y))
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.shadowBlur = 0
+        
+        // 主巷道标签
+        const midIdx = Math.floor(mainRoad.length / 2)
+        ctx.fillStyle = '#00ffff'
+        ctx.font = `bold ${Math.max(10, 12 / scale)}px sans-serif`
+        ctx.textAlign = 'center'
+        ctx.fillText('主巷道', mainRoad[midIdx].x, mainRoad[midIdx].y - 15)
+      }
+      
+      // 绘制分巷道
+      if (designData.branchRoadways && designData.branchRoadways.length > 0) {
+        designData.branchRoadways.forEach(branch => {
+          if (branch.path && branch.path.length > 1) {
+            // 分巷背景
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)'
+            ctx.lineWidth = 8
+            ctx.lineCap = 'round'
+            ctx.beginPath()
+            ctx.moveTo(branch.path[0].x, branch.path[0].y)
+            branch.path.forEach(p => ctx.lineTo(p.x, p.y))
+            ctx.stroke()
+            
+            // 分巷中线
+            ctx.strokeStyle = '#a855f7'
+            ctx.lineWidth = 2
+            ctx.setLineDash([10, 8])
+            ctx.lineDashOffset = -time * 1.5
+            ctx.beginPath()
+            ctx.moveTo(branch.path[0].x, branch.path[0].y)
+            branch.path.forEach(p => ctx.lineTo(p.x, p.y))
+            ctx.stroke()
+            ctx.setLineDash([])
+          }
+        })
+      }
+      
+      // 绘制工作面
+      if (designData.workfaces && designData.workfaces.length > 0) {
+        designData.workfaces.forEach((face, idx) => {
+          const { x, y, width: w, length: h, avgScore } = face
+          const score = avgScore || 0
+          
+          // 工作面背景
+          ctx.fillStyle = scoreToColor(score, 0.3)
+          ctx.fillRect(x, y, w, h)
+          
+          // 工作面边框 - 发光效果
+          ctx.shadowBlur = 8
+          ctx.shadowColor = score > 70 ? '#10b981' : '#f59e0b'
+          ctx.strokeStyle = score > 70 ? '#10b981' : '#f59e0b'
+          ctx.lineWidth = 2
+          ctx.strokeRect(x, y, w, h)
+          ctx.shadowBlur = 0
+          
+          // 扫描线动画
+          const scanProgress = (time + idx * 20) % 100
+          const scanY = y + (h * scanProgress / 100)
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.moveTo(x, scanY)
+          ctx.lineTo(x + w, scanY)
+          ctx.stroke()
+          
+          // 工作面标签
+          ctx.fillStyle = '#fff'
+          ctx.font = `bold ${Math.max(10, 12 / scale)}px "Courier New"`
+          ctx.textAlign = 'center'
+          ctx.fillText(face.id || `WF_${String(idx + 1).padStart(2, '0')}`, x + w / 2, y + h / 2 - 5)
+          ctx.font = `${Math.max(8, 10 / scale)}px "Courier New"`
+          ctx.fillText(`${score.toFixed(0)}分`, x + w / 2, y + h / 2 + 10)
+        })
+      }
+    }
 
+    ctx.restore() // 恢复裁剪
+
+    // ====== 边界轮廓 ======
     ctx.shadowBlur = 10
     ctx.shadowColor = '#0ea5e9'
     ctx.strokeStyle = '#0ea5e9'
@@ -374,17 +570,31 @@ const MiningDesignSystem = () => {
     ctx.stroke()
     ctx.shadowBlur = 0
 
+    // ====== 钻孔点标记 ======
     if (boreholes.length > 0) {
       boreholes.forEach((hole, idx) => {
-        const isActive = activeTab === 'analysis'
-        ctx.fillStyle = isActive ? '#fff' : 'rgba(255,255,255,0.5)'
+        const isActive = activeTab === 'analysis' || activeTab === 'synthesis'
+        const isSelected = selectedBorehole && selectedBorehole.id === hole.id
+        
+        // 钻孔点
+        ctx.fillStyle = isSelected ? '#fbbf24' : (isActive ? '#fff' : 'rgba(255,255,255,0.5)')
         ctx.beginPath()
-        const r = isActive ? 3 + Math.sin(time * 0.1 + idx) : 2
+        const r = isSelected ? 5 : (isActive ? 3 + Math.sin(time * 0.1 + idx) * 0.5 : 2)
         ctx.arc(hole.x, hole.y, r, 0, Math.PI * 2)
         ctx.fill()
+        
+        // 选中高亮
+        if (isSelected) {
+          ctx.strokeStyle = '#fbbf24'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.arc(hole.x, hole.y, 10, 0, Math.PI * 2)
+          ctx.stroke()
+        }
       })
     }
 
+    // ====== 扫描线动画 ======
     if (isLoading || activeTab === 'analysis') {
       const scanX = (time * 4) % (width / scale)
       const gradient = ctx.createLinearGradient(scanX, 0, scanX - 100, 0)
@@ -401,13 +611,52 @@ const MiningDesignSystem = () => {
 
     ctx.restore() // 恢复变换
 
+    // ====== 图例绘制 (不受变换影响) ======
+    if (scoreData && (showHeatmap || showContours)) {
+      const legendX = 20
+      const legendY = height - 180
+      const legendWidth = 20
+      const legendHeight = 150
+      
+      // 图例背景
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+      ctx.fillRect(legendX - 10, legendY - 30, 100, legendHeight + 60)
+      
+      // 图例标题
+      ctx.fillStyle = '#fff'
+      ctx.font = 'bold 12px sans-serif'
+      ctx.fillText('评分图例', legendX, legendY - 10)
+      
+      // 颜色条
+      for (let i = 0; i < legendHeight; i++) {
+        const score = 100 - (i / legendHeight * 100)
+        ctx.fillStyle = scoreToColor(score, 1)
+        ctx.fillRect(legendX, legendY + i, legendWidth, 1)
+      }
+      
+      // 刻度标签
+      ctx.fillStyle = '#fff'
+      ctx.font = '10px sans-serif'
+      ctx.fillText('100', legendX + legendWidth + 5, legendY + 5)
+      ctx.fillText('75', legendX + legendWidth + 5, legendY + legendHeight * 0.25 + 3)
+      ctx.fillText('50', legendX + legendWidth + 5, legendY + legendHeight * 0.5 + 3)
+      ctx.fillText('25', legendX + legendWidth + 5, legendY + legendHeight * 0.75 + 3)
+      ctx.fillText('0', legendX + legendWidth + 5, legendY + legendHeight)
+      
+      // 维度标签
+      const dimLabels = { safety: '安全性', economic: '经济性', env: '环保性', composite: '综合' }
+      ctx.fillStyle = '#a5b4fc'
+      ctx.font = 'bold 11px sans-serif'
+      ctx.fillText(dimLabels[displayDimension] || '综合', legendX, legendY + legendHeight + 20)
+    }
+
     requestRef.current = requestAnimationFrame(animate)
   }
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(requestRef.current)
-  }, [boundary, boreholes, weights, activeTab, isLoading, scale, showGrid, panOffset])
+  }, [boundary, boreholes, weights, activeTab, isLoading, scale, showGrid, panOffset, scoreData, designData, showHeatmap, showContours, showDesign, displayDimension, selectedBorehole])
   return (
   <div className="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans overflow-hidden bg-cyber-grid selection:bg-blue-500/30">
     <GlobalStyles />
@@ -472,7 +721,7 @@ const MiningDesignSystem = () => {
 
     {/* 设置面板 */}
     {settingsOpen && (
-      <div className="absolute top-20 right-8 z-50 glass-panel rounded-xl p-5 w-80 shadow-2xl border border-gray-700">
+      <div className="absolute top-20 right-8 z-50 glass-panel rounded-xl p-5 w-80 shadow-2xl border border-gray-700 max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Settings size={16} className="text-blue-400" /> 系统设置
@@ -495,7 +744,48 @@ const MiningDesignSystem = () => {
                 />
                 <span className="text-sm text-gray-300">显示网格</span>
               </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={showHeatmap}
+                  onChange={(e) => setShowHeatmap(e.target.checked)}
+                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-300">显示热力图</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={showContours}
+                  onChange={(e) => setShowContours(e.target.checked)}
+                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-300">显示等值线</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={showDesign}
+                  onChange={(e) => setShowDesign(e.target.checked)}
+                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-300">显示设计方案</span>
+              </label>
             </div>
+          </div>
+          
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400 uppercase tracking-wider">分析维度</label>
+            <select
+              value={displayDimension}
+              onChange={(e) => setDisplayDimension(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="composite">综合评分</option>
+              <option value="safety">安全性评分</option>
+              <option value="economic">经济性评分</option>
+              <option value="env">环保性评分</option>
+            </select>
           </div>
           
           <div className="space-y-2">
@@ -524,6 +814,8 @@ const MiningDesignSystem = () => {
               onClick={() => {
                 setBoundary([]);
                 setBoreholes([]);
+                setScoreData(null);
+                setDesignData(null);
                 setActiveTab('import');
                 setSystemLog([]);
                 addLog('系统已重置', 'warning');
@@ -544,49 +836,102 @@ const MiningDesignSystem = () => {
       <div className="p-5 space-y-8 overflow-y-auto">
                 
         <div className="space-y-4">
-          <h3 className="text-xs uppercase tracking-[0.2em] text-blue-400 font-bold flex items-center gap-2 pb-2 border-b border-gray-700/50">
-            <Database size={12} /> Data Sources
-          </h3>
-                    
-          <div className="space-y-3">
-            <button 
-              onClick={handleImportBoundary}
-              className={`group w-full relative overflow-hidden p-4 rounded-xl border transition-all duration-300 text-left
-                ${boundary.length > 0 
-                  ? 'bg-blue-900/20 border-blue-500/50 text-blue-300' 
-                  : 'bg-gray-800/40 border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800'}
-              `}
-            >
-               <div className={`absolute inset-0 bg-blue-400/10 translate-y-full transition-transform duration-300 ${boundary.length > 0 ? '' : 'group-hover:translate-y-0'}`}></div>
-               <div className="flex justify-between items-center relative z-10">
-                <div>
-                  <span className="block text-sm font-bold">采区边界矢量</span>
-                  <span className="text-[10px] opacity-70">DXF / GIS Vector Format</span>
-                </div>
-                {boundary.length > 0 ? <CheckCircle className="text-blue-400" size={18} /> : <Upload size={18} />}
-               </div>
-            </button>
-                        
-            <button 
-              onClick={handleImportBoreholes}
-              disabled={boundary.length === 0}
-              className={`group w-full relative overflow-hidden p-4 rounded-xl border transition-all duration-300 text-left
-                ${boreholes.length > 0 
-                  ? 'bg-amber-900/20 border-amber-500/50 text-amber-300' 
-                  : 'bg-gray-800/40 border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800'}
-                ${boundary.length === 0 ? 'opacity-40 cursor-not-allowed' : ''}
-              `}
-            >
-               <div className={`absolute inset-0 bg-amber-400/10 translate-y-full transition-transform duration-300 ${boreholes.length > 0 ? '' : 'group-hover:translate-y-0'}`}></div>
-               <div className="flex justify-between items-center relative z-10">
-                <div>
-                  <span className="block text-sm font-bold">钻孔地质库</span>
-                  <span className="text-[10px] opacity-70">CSV / SQL Database</span>
-                </div>
-                {boreholes.length > 0 ? <CheckCircle className="text-amber-400" size={18} /> : <Database size={18} />}
-               </div>
-            </button>
+          <div className="flex items-center justify-between pb-2 border-b border-gray-700/50">
+            <h3 className="text-xs uppercase tracking-[0.2em] text-blue-400 font-bold flex items-center gap-2">
+              <Database size={12} /> Data Sources
+            </h3>
+            {/* 导入模式切换 */}
+            <div className="flex bg-gray-800/50 rounded-full p-0.5 border border-gray-700">
+              <button
+                onClick={() => setImportMode('file')}
+                className={`px-2 py-1 text-[10px] rounded-full transition-all ${
+                  importMode === 'file' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                文件
+              </button>
+              <button
+                onClick={() => setImportMode('demo')}
+                className={`px-2 py-1 text-[10px] rounded-full transition-all ${
+                  importMode === 'demo' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                演示
+              </button>
+            </div>
           </div>
+          
+          {/* CSV 文件上传模式 */}
+          {importMode === 'file' && (
+            <FileUploader 
+              onUploadComplete={handleFileUploadComplete}
+              onLog={addLog}
+            />
+          )}
+          
+          {/* 演示数据模式 */}
+          {importMode === 'demo' && (
+            <div className="space-y-3">
+              <button 
+                onClick={handleImportBoundary}
+                className={`group w-full relative overflow-hidden p-4 rounded-xl border transition-all duration-300 text-left
+                  ${boundary.length > 0 
+                    ? 'bg-blue-900/20 border-blue-500/50 text-blue-300' 
+                    : 'bg-gray-800/40 border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800'}
+                `}
+              >
+                 <div className={`absolute inset-0 bg-blue-400/10 translate-y-full transition-transform duration-300 ${boundary.length > 0 ? '' : 'group-hover:translate-y-0'}`}></div>
+                 <div className="flex justify-between items-center relative z-10">
+                  <div>
+                    <span className="block text-sm font-bold">采区边界矢量</span>
+                    <span className="text-[10px] opacity-70">模拟 DXF 数据</span>
+                  </div>
+                  {boundary.length > 0 ? <CheckCircle className="text-blue-400" size={18} /> : <Upload size={18} />}
+                 </div>
+              </button>
+                          
+              <button 
+                onClick={handleImportBoreholes}
+                disabled={boundary.length === 0}
+                className={`group w-full relative overflow-hidden p-4 rounded-xl border transition-all duration-300 text-left
+                  ${boreholes.length > 0 
+                    ? 'bg-amber-900/20 border-amber-500/50 text-amber-300' 
+                    : 'bg-gray-800/40 border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800'}
+                  ${boundary.length === 0 ? 'opacity-40 cursor-not-allowed' : ''}
+                `}
+              >
+                 <div className={`absolute inset-0 bg-amber-400/10 translate-y-full transition-transform duration-300 ${boreholes.length > 0 ? '' : 'group-hover:translate-y-0'}`}></div>
+                 <div className="flex justify-between items-center relative z-10">
+                  <div>
+                    <span className="block text-sm font-bold">钻孔地质库</span>
+                    <span className="text-[10px] opacity-70">模拟 30 个钻孔</span>
+                  </div>
+                  {boreholes.length > 0 ? <CheckCircle className="text-amber-400" size={18} /> : <Database size={18} />}
+                 </div>
+              </button>
+            </div>
+          )}
+          
+          {/* 数据状态指示器 */}
+          {(boundary.length > 0 || boreholes.length > 0) && (
+            <div className="bg-gray-800/30 rounded-lg p-3 space-y-2">
+              <div className="text-[10px] text-gray-400 uppercase tracking-wider">已导入数据</div>
+              {boundary.length > 0 && (
+                <div className="flex items-center gap-2 text-xs text-blue-300">
+                  <CheckCircle size={12} /> 边界顶点: {boundary.length} 个
+                </div>
+              )}
+              {boreholes.length > 0 && (
+                <div className="flex items-center gap-2 text-xs text-amber-300">
+                  <CheckCircle size={12} /> 钻孔数据: {boreholes.length} 条
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">

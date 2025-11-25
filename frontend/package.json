@@ -2,6 +2,7 @@
   "name": "shejixitong-frontend",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "智能采掘设计系统 - 前端",
   "scripts": {
     "dev": "vite",
