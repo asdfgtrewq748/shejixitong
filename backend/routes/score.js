@@ -18,12 +18,15 @@ router.post('/', (req, res) => {
     resolution = 50  // 网格分辨率，默认 50x50
   } = req.body;
   const totalWeight = weights.safety + weights.economic + weights.env || 1;
+  
+  // 获取全局上下文
+  const ctx = store.globalContext || {};
 
   // 1. 计算每个钻孔各维度得分
   const scoredBoreholes = store.boreholes.map(hole => {
-    const safety = calcSafetyScore(hole);
-    const economic = calcEconomicScore(hole);
-    const env = calcEnvScore(hole);
+    const safety = calcSafetyScore(hole, ctx);
+    const economic = calcEconomicScore(hole, ctx);
+    const env = calcEnvScore(hole, ctx);
     const composite = (safety * weights.safety + economic * weights.economic + env * weights.env) / totalWeight;
     return {
       ...hole,

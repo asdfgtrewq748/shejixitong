@@ -144,9 +144,20 @@ const MiningDesignSystem = () => {
         if (boreholesRes && Array.isArray(boreholesRes) && boreholesRes.length > 0) {
           addLog(`检测到 ${boreholesRes.length} 个内置钻孔，正在计算评分...`, 'loading');
           try {
-            // 调用后端计算评分
-            const result = await api.calculateScore(weights);
+            // 调用后端计算评分（包含热力图数据）
+            const result = await api.calculateScore(weights, 50);
             setBoreholes(result.boreholes || boreholesRes);
+            
+            // 设置热力图数据
+            if (result.grids && result.contours) {
+              setScoreData({
+                grids: result.grids,
+                contours: result.contours,
+                stats: result.stats
+              });
+              addLog(`评分网格生成完成 (${Object.keys(result.grids || {}).length}个维度)`, 'success');
+            }
+            
             addLog(`内置钻孔数据加载完毕 [数量: ${result.boreholes?.length || boreholesRes.length}]`, 'success');
           } catch (err) {
             console.error("Score calculation failed", err);
@@ -421,7 +432,8 @@ const MiningDesignSystem = () => {
     ctx.clip()
 
     // ====== 热力图渲染 ======
-    if (showHeatmap && scoreData && scoreData.grids) {
+    // 在 analysis 或 synthesis 阶段都显示热力图
+    if (showHeatmap && scoreData && scoreData.grids && (activeTab === 'analysis' || activeTab === 'synthesis')) {
       const gridData = scoreData.grids[displayDimension]
       
       if (gridData && gridData.data && gridData.data.length > 0) {
@@ -445,7 +457,8 @@ const MiningDesignSystem = () => {
     }
 
     // ====== 等值线渲染 ======
-    if (showContours && scoreData && scoreData.contours) {
+    // 在 analysis 或 synthesis 阶段都显示等值线
+    if (showContours && scoreData && scoreData.contours && (activeTab === 'analysis' || activeTab === 'synthesis')) {
       const contourData = scoreData.contours[displayDimension]
       
       if (contourData && typeof contourData === 'object') {
@@ -483,32 +496,8 @@ const MiningDesignSystem = () => {
     }
 
     // ====== 钻孔径向渐变 (如果没有热力图数据时显示) ======
-    if (!scoreData && boreholes.length > 0) {
-      const totalWeight = weights.safety + weights.economic + weights.env
-
-      boreholes.forEach((hole, idx) => {
-        const weightedScore = (
-          hole.scores.safety * weights.safety +
-          hole.scores.economic * weights.economic +
-          hole.scores.env * weights.env
-        ) / (totalWeight || 1)
-
-        const pulseScale = 1 + Math.sin(time * 0.05 + idx) * 0.05
-        const radius = 120 * pulseScale
-
-        const grad = ctx.createRadialGradient(hole.x, hole.y, 0, hole.x, hole.y, radius)
-        const colorMain = weightedScore > 80 ? '16, 185, 129' : weightedScore > 50 ? '245, 158, 11' : '239, 68, 68'
-        grad.addColorStop(0, `rgba(${colorMain}, 0.5)`)
-        grad.addColorStop(1, 'rgba(0,0,0,0)')
-
-        ctx.globalCompositeOperation = 'screen'
-        ctx.fillStyle = grad
-        ctx.beginPath()
-        ctx.arc(hole.x, hole.y, radius, 0, Math.PI * 2)
-        ctx.fill()
-      })
-      ctx.globalCompositeOperation = 'source-over'
-    }
+    // 注释掉旧的径向渐变逻辑，改为始终显示热力图
+    // if (!scoreData && boreholes.length > 0) { ... }
 
     // ====== 智能设计渲染 (巷道和工作面) ======
     if (showDesign && designData && activeTab === 'synthesis') {
@@ -672,7 +661,7 @@ const MiningDesignSystem = () => {
     ctx.restore() // 恢复变换
 
     // ====== 图例绘制 (不受变换影响) ======
-    if (scoreData && (showHeatmap || showContours)) {
+    if (scoreData && (showHeatmap || showContours) && (activeTab === 'analysis' || activeTab === 'synthesis')) {
       const legendX = 20
       const legendY = height - 180
       const legendWidth = 20

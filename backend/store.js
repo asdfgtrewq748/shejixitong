@@ -18,7 +18,68 @@ const store = {
   boreholeData: [],          // 钻孔数据 (临时)
   scores: null,              // 计算后的评分结果
   design: null,              // 生成的设计方案
+  
+  // ========== 全局上下文参数（用于评分计算）==========
+  globalContext: {
+    // 经济性参数
+    idealCoalThickness: 6,         // 理想煤层厚度 (m)
+    maxLocalReserveRadius: 200,    // 认为储量充分的边界距离 (m)
+    calorificMin: 18,              // 矿区最低发热量 (MJ/kg)
+    calorificMax: 30,              // 矿区最高发热量 (MJ/kg)
+    
+    // 环保性参数
+    waterSafeDistance: 200,        // 距水体安全距离 (m)
+    protectedSafeDistance: 500,    // 距生态保护区安全距离 (m)
+    criticalWaterPressure: 0.1,    // 突水系数临界值 (MPa/m)
+    subsidenceK: 5,                // 沉陷风险系数
+    
+    // 安全性参数
+    gasThreshold: 8,               // 瓦斯含量警戒值 (m³/t)
+    idealRockHardness: 7,          // 理想岩石硬度（普氏系数）
+    
+    // 权重配置
+    envWeights: { subsidence: 0.4, water: 0.3, eco: 0.3 },
+    econWeights: { reserve: 0.33, thickness: 0.33, quality: 0.34 },
+  }
 };
+
+/**
+ * 计算点到多边形边界的最近距离
+ */
+function calculateDistanceToBoundary(point, boundary) {
+  if (!boundary || boundary.length < 3) return 0;
+  
+  let minDist = Infinity;
+  
+  for (let i = 0; i < boundary.length; i++) {
+    const j = (i + 1) % boundary.length;
+    const dist = pointToSegmentDistance(point, boundary[i], boundary[j]);
+    minDist = Math.min(minDist, dist);
+  }
+  
+  return minDist;
+}
+
+/**
+ * 计算点到线段的距离
+ */
+function pointToSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  
+  if (lenSq === 0) {
+    return Math.hypot(p.x - a.x, p.y - a.y);
+  }
+  
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  
+  const nearestX = a.x + t * dx;
+  const nearestY = a.y + t * dy;
+  
+  return Math.hypot(p.x - nearestX, p.y - nearestY);
+}
 
 // Helper: 简单 CSV 解析（用于内置示例，不处理复杂 CSV 转义）
 function parseCSV(content) {
@@ -63,9 +124,9 @@ function tryLoadInput() {
       const rows = parseCSV(txt)
       rows.forEach(r => {
         // 兼容多种列名
-        const id = r.id || r.ID || r['钻孔编号'] || r['钻孔ID'] || (r.name || r.Name)
-        const x = parseFloat(r.x || r.X || r['坐标X'] || r['x'])
-        const y = parseFloat(r.y || r.Y || r['坐标Y'] || r['y'])
+        const id = r.id || r.ID || r['钻孔编号'] || r['钻孔ID'] || r['钻孔名'] || (r.name || r.Name)
+        const x = parseFloat(r.x || r.X || r['坐标X'] || r['坐标x'] || r['x'])
+        const y = parseFloat(r.y || r.Y || r['坐标Y'] || r['坐标y'] || r['y'])
         if (!Number.isNaN(x) && !Number.isNaN(y)) {
           coords.push({ id: id ? String(id) : `BH_${coords.length + 1}`, x, y })
         }
@@ -129,7 +190,35 @@ function tryLoadInput() {
             }
           }
         }
-        merged.push({ id: c.id, x: c.x, y: c.y, data: data || {}, scores: { safety: 0, economic: 0, env: 0 } })
+        
+        // 构建钻孔对象，添加派生字段
+        const borehole = { 
+          id: c.id, 
+          x: c.x, 
+          y: c.y, 
+          data: data || {}, 
+          scores: { safety: 0, economic: 0, env: 0 }
+        };
+        
+        // 从data中提取标准字段（兼容多种命名）
+        if (data) {
+          borehole.depth = parseFloat(data['埋深'] || data['depth'] || data['Depth'] || 0);
+          borehole.coalThickness = parseFloat(data['煤层厚度'] || data['厚度'] || data['coalThickness'] || 0);
+          borehole.rockHardness = parseFloat(data['岩石硬度'] || data['普氏系数'] || data['rockHardness'] || 5);
+          borehole.gasContent = parseFloat(data['瓦斯含量'] || data['瓦斯'] || data['gasContent'] || 0);
+          borehole.groundWater = parseFloat(data['地下水位'] || data['水位'] || data['groundWater'] || 0);
+          borehole.calorificValue = parseFloat(data['发热量'] || data['热值'] || data['calorificValue'] || null);
+          
+          // 环保相关字段（可选）
+          borehole.aquiferPressure = parseFloat(data['含水层水压'] || data['aquiferPressure'] || null);
+          borehole.aquicludeThickness = parseFloat(data['隔水层厚度'] || data['aquicludeThickness'] || null);
+          borehole.waterRichnessIndex = parseFloat(data['富水指数'] || data['waterRichnessIndex'] || 0);
+          borehole.ecoLandType = data['土地类型'] || data['ecoLandType'] || 'wasteland';
+          borehole.distanceToWaterBody = parseFloat(data['距水体距离'] || data['distanceToWaterBody'] || 1000);
+          borehole.distanceToProtectedArea = parseFloat(data['距保护区距离'] || data['distanceToProtectedArea'] || 2000);
+        }
+        
+        merged.push(borehole);
       })
     } else {
       // 没有坐标，尝试仅从 BK 文件生成条目
@@ -152,7 +241,7 @@ function tryLoadInput() {
       const maxY = Math.max(...ys)
       const w = maxX - minX || 1
       const h = maxY - minY || 1
-      const margin = Math.max(w, h) * 0.05
+      const margin = Math.max(w, h) * 0.15
       const boundary = [
         { x: Math.round(minX - margin), y: Math.round(minY - margin) },
         { x: Math.round(maxX + margin), y: Math.round(minY - margin) },
@@ -160,6 +249,11 @@ function tryLoadInput() {
         { x: Math.round(minX - margin), y: Math.round(maxY + margin) }
       ]
       store.boundary = boundary
+      
+      // 5) 计算每个钻孔到边界的距离（用于经济评分）
+      merged.forEach(bh => {
+        bh.distanceToBoundary = calculateDistanceToBoundary(bh, boundary);
+      });
     }
 
   } catch (err) {
