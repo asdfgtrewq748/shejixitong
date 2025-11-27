@@ -112,6 +112,66 @@ const MiningDesignSystem = () => {
     setSystemLog(prev => [`[${time}] ${msg}|${type}`, ...prev].slice(0, 50));
   };
 
+  // 自动加载内置数据
+  useEffect(() => {
+    const fetchBuiltInData = async () => {
+      try {
+        // 延迟一点执行，确保组件已挂载且用户能看到日志
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        addLog('正在连接后端服务...', 'loading');
+        
+        // 并行获取数据
+        const [boreholesRes, boundaryRes] = await Promise.all([
+          api.getBoreholes().catch(e => {
+            console.warn("Fetch boreholes failed", e);
+            return [];
+          }),
+          api.getBoundary().catch(e => {
+            console.warn("Fetch boundary failed", e);
+            return [];
+          })
+        ]);
+
+        let hasData = false;
+
+        if (boundaryRes && Array.isArray(boundaryRes) && boundaryRes.length > 0) {
+          setBoundary(boundaryRes);
+          addLog(`已加载内置采区边界 [顶点: ${boundaryRes.length}]`, 'success');
+          hasData = true;
+        }
+
+        if (boreholesRes && Array.isArray(boreholesRes) && boreholesRes.length > 0) {
+          addLog(`检测到 ${boreholesRes.length} 个内置钻孔，正在计算评分...`, 'loading');
+          try {
+            // 调用后端计算评分
+            const result = await api.calculateScore(weights);
+            setBoreholes(result.boreholes || boreholesRes);
+            addLog(`内置钻孔数据加载完毕 [数量: ${result.boreholes?.length || boreholesRes.length}]`, 'success');
+          } catch (err) {
+            console.error("Score calculation failed", err);
+            setBoreholes(boreholesRes);
+            addLog(`内置钻孔数据已加载 (评分服务暂不可用)`, 'warning');
+          }
+          hasData = true;
+        }
+
+        if (hasData) {
+          setActiveTab('analysis');
+          addLog('系统初始化完成，已自动切换至分析模式', 'success');
+        } else {
+          addLog('未检测到内置数据，等待手动导入...', 'info');
+        }
+
+      } catch (err) {
+        console.error("Auto-fetch failed", err);
+        addLog('无法连接到后端服务，请确保后端已启动 (Port 3001)', 'warning');
+      }
+    };
+
+    fetchBuiltInData();
+  }, []); // 仅在组件挂载时执行一次
+
   // 画布鼠标事件处理
   const handleCanvasMouseMove = (e) => {
     const canvas = canvasRef.current;
@@ -262,7 +322,7 @@ const MiningDesignSystem = () => {
 
       // 2. 调用后端生成设计方案
       addLog('运行遗传算法优化巷道路径...', 'info');
-      const design = await api.generateDesign(displayDimension);
+      const design = await api.generateDesign({ mode: displayDimension });
       setDesignData(design);
       
       const faceCount = design.workfaces?.length || 0;

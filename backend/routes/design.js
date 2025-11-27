@@ -212,83 +212,194 @@ function planMainRoadway(grid, boundary, regions, minScore) {
 }
 
 /**
- * 规划工作面
- * 在高分区域内划分矩形工作面
+ * 规划工作面 - 条带式布局
+ * 在采区范围内划分统一宽度的条带式工作面，从一侧到另一侧平行排列
  */
 function planWorkfaces(grid, regions, width, length, minScore) {
   const workfaces = [];
-  const { minX, minY, stepX, stepY, data, resolution } = grid;
+  const { minX, maxX, minY, maxY, stepX, stepY, data, resolution } = grid;
+  
+  // 计算采区的有效范围（基于边界或网格范围）
+  const areaWidth = maxX - minX;
+  const areaHeight = maxY - minY;
+  
+  // 条带间距（巷道宽度）
+  const stripGap = 10;
+  
+  // 根据采区形状决定条带方向
+  // 如果采区较宽，则条带沿Y方向排列（水平条带）
+  // 如果采区较高，则条带沿X方向排列（垂直条带）
+  const isHorizontalStrips = areaWidth >= areaHeight;
+  
+  // 统一工作面宽度
+  const uniformWidth = width;
   
   let faceId = 1;
-  for (const region of regions) {
-    if (region.avgScore < minScore) continue;
+  
+  if (isHorizontalStrips) {
+    // 水平条带：工作面沿X方向延伸，沿Y方向依次排列
+    // 每个条带的长度尽量跨越整个采区宽度
+    const stripLength = Math.min(length, areaWidth * 0.8); // 工作面长度
+    const startX = minX + (areaWidth - stripLength) / 2; // 居中放置
     
-    // 计算区域的包围盒
-    const xs = region.cells.map(c => c.x);
-    const ys = region.cells.map(c => c.y);
-    const regionMinX = Math.min(...xs);
-    const regionMaxX = Math.max(...xs);
-    const regionMinY = Math.min(...ys);
-    const regionMaxY = Math.max(...ys);
+    // 从底部向上排列条带
+    let currentY = minY + stripGap;
     
-    // 尝试在区域内放置工作面
-    for (let y = regionMinY; y + length <= regionMaxY; y += length + 20) {
-      for (let x = regionMinX; x + width <= regionMaxX; x += width + 20) {
-        // 检查工作面区域的平均分
-        const faceScore = calculateAreaScore(grid, x, y, width, length);
-        if (faceScore >= minScore) {
-          workfaces.push({
-            id: `WF-${String(faceId++).padStart(2, '0')}`,
-            x: Math.round(x),
-            y: Math.round(y),
-            width,
-            length,
-            avgScore: Math.round(faceScore * 10) / 10,
-            region: regions.indexOf(region) + 1
-          });
-        }
+    while (currentY + uniformWidth <= maxY - stripGap) {
+      // 计算该条带的平均评分
+      const faceScore = calculateAreaScore(grid, startX, currentY, stripLength, uniformWidth);
+      
+      // 检查该位置是否在有效区域内（至少30%的格点有效）
+      const validRatio = calculateValidRatio(grid, startX, currentY, stripLength, uniformWidth);
+      
+      if (validRatio >= 0.3 && faceScore >= minScore * 0.7) {
+        workfaces.push({
+          id: `WF-${String(faceId++).padStart(2, '0')}`,
+          x: Math.round(startX),
+          y: Math.round(currentY),
+          width: Math.round(stripLength),  // 条带的实际"长度"作为渲染宽度
+          length: uniformWidth,             // 统一的条带"宽度"作为渲染高度
+          avgScore: Math.round(faceScore * 10) / 10,
+          direction: 'horizontal',
+          stripIndex: faceId - 1
+        });
       }
+      
+      currentY += uniformWidth + stripGap;
+    }
+  } else {
+    // 垂直条带：工作面沿Y方向延伸，沿X方向依次排列
+    const stripLength = Math.min(length, areaHeight * 0.8);
+    const startY = minY + (areaHeight - stripLength) / 2;
+    
+    let currentX = minX + stripGap;
+    
+    while (currentX + uniformWidth <= maxX - stripGap) {
+      const faceScore = calculateAreaScore(grid, currentX, startY, uniformWidth, stripLength);
+      const validRatio = calculateValidRatio(grid, currentX, startY, uniformWidth, stripLength);
+      
+      if (validRatio >= 0.3 && faceScore >= minScore * 0.7) {
+        workfaces.push({
+          id: `WF-${String(faceId++).padStart(2, '0')}`,
+          x: Math.round(currentX),
+          y: Math.round(startY),
+          width: uniformWidth,
+          length: Math.round(stripLength),
+          avgScore: Math.round(faceScore * 10) / 10,
+          direction: 'vertical',
+          stripIndex: faceId - 1
+        });
+      }
+      
+      currentX += uniformWidth + stripGap;
     }
   }
 
-  // 如果没有找到合适工作面，在最高分区域中心放一个
-  if (workfaces.length === 0 && regions.length > 0) {
-    const bestRegion = regions[0];
-    workfaces.push({
-      id: 'WF-01',
-      x: Math.round(bestRegion.center.x - width / 2),
-      y: Math.round(bestRegion.center.y - length / 2),
-      width,
-      length,
-      avgScore: bestRegion.avgScore,
-      region: 1
-    });
+  // 如果没有找到合适工作面，尝试放宽条件
+  if (workfaces.length === 0) {
+    // 在整个采区中心放置一个条带
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    
+    if (isHorizontalStrips) {
+      const stripLen = areaWidth * 0.6;
+      workfaces.push({
+        id: 'WF-01',
+        x: Math.round(centerX - stripLen / 2),
+        y: Math.round(centerY - uniformWidth / 2),
+        width: Math.round(stripLen),
+        length: uniformWidth,
+        avgScore: regions.length > 0 ? regions[0].avgScore : 50,
+        direction: 'horizontal',
+        stripIndex: 1
+      });
+    } else {
+      const stripLen = areaHeight * 0.6;
+      workfaces.push({
+        id: 'WF-01',
+        x: Math.round(centerX - uniformWidth / 2),
+        y: Math.round(centerY - stripLen / 2),
+        width: uniformWidth,
+        length: Math.round(stripLen),
+        avgScore: regions.length > 0 ? regions[0].avgScore : 50,
+        direction: 'vertical',
+        stripIndex: 1
+      });
+    }
   }
 
   return workfaces;
 }
 
 /**
+ * 计算矩形区域内有效格点的比例
+ */
+function calculateValidRatio(grid, x, y, width, height) {
+  const { data, minX, minY, stepX, stepY, resolution } = grid;
+  let valid = 0, total = 0;
+
+  const startCol = Math.floor((x - minX) / stepX);
+  const endCol = Math.ceil((x + width - minX) / stepX);
+  const startRow = Math.floor((y - minY) / stepY);
+  const endRow = Math.ceil((y + height - minY) / stepY);
+
+  for (let row = startRow; row <= endRow && row <= resolution; row++) {
+    for (let col = startCol; col <= endCol && col <= resolution; col++) {
+      if (row >= 0 && col >= 0) {
+        total++;
+        if (data[row]?.[col] !== null) {
+          valid++;
+        }
+      }
+    }
+  }
+
+  return total > 0 ? valid / total : 0;
+}
+
+/**
  * 规划分巷道（连接主巷道和工作面）
+ * 条带式布局：主巷道沿一侧，分巷道垂直连接各工作面
  */
 function planBranchRoadways(mainRoadway, workfaces, grid, roadwayWidth) {
   const branches = [];
+  
+  if (workfaces.length === 0) return branches;
+  
+  // 获取主巷道终点作为分巷道起点
   const junction = mainRoadway.path[mainRoadway.path.length - 1];
+  
+  // 根据工作面方向确定分巷道连接方式
+  const isHorizontal = workfaces[0]?.direction === 'horizontal';
 
   for (const face of workfaces) {
-    const faceCenter = {
-      x: face.x + face.width / 2,
-      y: face.y + face.length / 2
-    };
+    let connectPoint;
+    
+    if (isHorizontal) {
+      // 水平条带：分巷道连接到条带的左端或右端
+      // 选择距离主巷道较近的一端
+      const leftEnd = { x: face.x, y: face.y + face.length / 2 };
+      const rightEnd = { x: face.x + face.width, y: face.y + face.length / 2 };
+      const distLeft = Math.hypot(leftEnd.x - junction.x, leftEnd.y - junction.y);
+      const distRight = Math.hypot(rightEnd.x - junction.x, rightEnd.y - junction.y);
+      connectPoint = distLeft < distRight ? leftEnd : rightEnd;
+    } else {
+      // 垂直条带：分巷道连接到条带的上端或下端
+      const topEnd = { x: face.x + face.width / 2, y: face.y };
+      const bottomEnd = { x: face.x + face.width / 2, y: face.y + face.length };
+      const distTop = Math.hypot(topEnd.x - junction.x, topEnd.y - junction.y);
+      const distBottom = Math.hypot(bottomEnd.x - junction.x, bottomEnd.y - junction.y);
+      connectPoint = distTop < distBottom ? topEnd : bottomEnd;
+    }
 
     branches.push({
       id: `BR-${face.id.split('-')[1]}`,
       workfaceId: face.id,
       path: [
         { x: junction.x, y: junction.y, type: 'junction' },
-        { x: Math.round(faceCenter.x), y: Math.round(faceCenter.y), type: 'workface' }
+        { x: Math.round(connectPoint.x), y: Math.round(connectPoint.y), type: 'workface' }
       ],
-      length: Math.round(Math.hypot(faceCenter.x - junction.x, faceCenter.y - junction.y)),
+      length: Math.round(Math.hypot(connectPoint.x - junction.x, connectPoint.y - junction.y)),
       width: roadwayWidth
     });
   }
