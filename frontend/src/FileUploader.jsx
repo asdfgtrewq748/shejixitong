@@ -5,7 +5,7 @@ import * as api from './api';
 const FileUploader = ({ onUploadComplete, onLog }) => {
   const [boundaryFile, setBoundaryFile] = useState(null);
   const [coordinatesFile, setCoordinatesFile] = useState(null);
-  const [dataFile, setDataFile] = useState(null);
+  const [dataFiles, setDataFiles] = useState([]); // 改为数组支持多文件
   const [uploading, setUploading] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [uploadStatus, setUploadStatus] = useState({
@@ -15,32 +15,34 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
   });
 
   const handleFileSelect = (type, e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
     
-    if (!file.name.endsWith('.csv')) {
+    // 检查文件类型
+    const invalidFiles = files.filter(f => !f.name.endsWith('.csv'));
+    if (invalidFiles.length > 0) {
       onLog?.(`请选择 CSV 文件`, 'warning');
       return;
     }
 
     switch (type) {
       case 'boundary':
-        setBoundaryFile(file);
+        setBoundaryFile(files[0]);
         setUploadStatus(prev => ({ ...prev, boundary: null }));
         break;
       case 'coordinates':
-        setCoordinatesFile(file);
+        setCoordinatesFile(files[0]);
         setUploadStatus(prev => ({ ...prev, coordinates: null }));
         break;
       case 'data':
-        setDataFile(file);
+        setDataFiles(files); // 支持多个钻孔文件
         setUploadStatus(prev => ({ ...prev, data: null }));
         break;
     }
   };
 
   const handleUpload = async () => {
-    if (!boundaryFile && !coordinatesFile && !dataFile) {
+    if (!boundaryFile && !coordinatesFile && dataFiles.length === 0) {
       onLog?.('请至少选择一个文件', 'warning');
       return;
     }
@@ -78,13 +80,29 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
         }
       }
 
-      // 3. 上传钻孔数据
-      if (dataFile) {
+      // 3. 上传钻孔数据（支持多个文件）
+      if (dataFiles.length > 0) {
         try {
-          onLog?.('正在上传钻孔数据...', 'loading');
-          const dataResult = await api.uploadBoreholeDataCSV(dataFile);
-          setUploadStatus(prev => ({ ...prev, data: 'success' }));
-          onLog?.(`钻孔数据上传成功 [${dataResult.count || 0}个钻孔]`, 'success');
+          onLog?.(`正在上传钻孔数据 [${dataFiles.length}个文件]...`, 'loading');
+          let successCount = 0;
+          let errorCount = 0;
+          
+          for (const file of dataFiles) {
+            try {
+              await api.uploadBoreholeDataCSV(file);
+              successCount++;
+            } catch (err) {
+              errorCount++;
+              onLog?.(`${file.name} 上传失败: ${err.message}`, 'warning');
+            }
+          }
+          
+          if (successCount > 0) {
+            setUploadStatus(prev => ({ ...prev, data: 'success' }));
+            onLog?.(`钻孔数据上传完成 [成功${successCount}个，失败${errorCount}个]`, 'success');
+          } else {
+            setUploadStatus(prev => ({ ...prev, data: 'error' }));
+          }
         } catch (err) {
           setUploadStatus(prev => ({ ...prev, data: 'error' }));
           onLog?.(`钻孔数据上传失败: ${err.message}`, 'warning');
@@ -92,7 +110,7 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
       }
 
       // 4. 获取合并后的钻孔数据
-      if (coordinatesFile || dataFile) {
+      if (coordinatesFile || dataFiles.length > 0) {
         try {
           const boreholesResult = await api.getBoreholes();
           results.boreholes = boreholesResult;
@@ -112,20 +130,23 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
     }
   };
 
-  const renderFileInput = (type, file, setFile, label, description, color) => {
+  const renderFileInput = (type, file, setFile, label, description, color, isMultiple = false) => {
     const status = uploadStatus[type];
+    const files = isMultiple ? file : (file ? [file] : []);
+    const hasFiles = files.length > 0;
     
     return (
       <div className={`glass-panel rounded-lg p-4 border-2 ${
         status === 'success' ? 'border-green-500/50' :
         status === 'error' ? 'border-red-500/50' :
-        file ? `border-${color}-500/50` : 'border-gray-700'
+        hasFiles ? `border-${color}-500/50` : 'border-gray-700'
       }`}>
         <div className="flex items-start justify-between mb-3">
           <div className="flex-1">
             <h3 className={`font-semibold text-${color}-400 flex items-center gap-2`}>
               <FileText size={16} />
               {label}
+              {isMultiple && hasFiles && <span className="text-xs text-gray-400">({files.length}个文件)</span>}
             </h3>
             <p className="text-xs text-gray-400 mt-1">{description}</p>
           </div>
@@ -133,31 +154,50 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
           {status === 'error' && <AlertCircle size={20} className="text-red-400" />}
         </div>
 
-        {file ? (
-          <div className="flex items-center justify-between bg-gray-800/50 rounded px-3 py-2">
-            <span className="text-sm text-gray-300 truncate flex-1">{file.name}</span>
-            <button
-              onClick={() => {
-                setFile(null);
-                setUploadStatus(prev => ({ ...prev, [type]: null }));
-              }}
-              className="ml-2 text-gray-400 hover:text-red-400 transition-colors"
-              disabled={uploading}
-            >
-              <X size={16} />
-            </button>
+        {hasFiles ? (
+          <div className="space-y-2">
+            {files.slice(0, isMultiple ? files.length : 1).map((f, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-gray-800/50 rounded px-3 py-2">
+                <span className="text-sm text-gray-300 truncate flex-1">{f.name}</span>
+                {!isMultiple && (
+                  <button
+                    onClick={() => {
+                      setFile(null);
+                      setUploadStatus(prev => ({ ...prev, [type]: null }));
+                    }}
+                    className="ml-2 text-gray-400 hover:text-red-400 transition-colors"
+                    disabled={uploading}
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {isMultiple && (
+              <button
+                onClick={() => {
+                  setFile([]);
+                  setUploadStatus(prev => ({ ...prev, [type]: null }));
+                }}
+                className="text-xs text-gray-400 hover:text-red-400 transition-colors flex items-center gap-1"
+                disabled={uploading}
+              >
+                <X size={14} /> 清除所有文件
+              </button>
+            )}
           </div>
         ) : (
           <label className={`block border-2 border-dashed border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:border-${color}-500 transition-colors`}>
             <input
               type="file"
               accept=".csv"
+              multiple={isMultiple}
               onChange={(e) => handleFileSelect(type, e)}
               className="hidden"
               disabled={uploading}
             />
             <Upload size={24} className="mx-auto mb-2 text-gray-500" />
-            <p className="text-sm text-gray-400">点击选择 CSV 文件</p>
+            <p className="text-sm text-gray-400">点击选择 CSV 文件{isMultiple ? '（支持多选）' : ''}</p>
           </label>
         )}
       </div>
@@ -185,22 +225,22 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
           <div className="space-y-1 text-gray-400">
             <div>• <span className="text-blue-400">采区边界</span>：包含 x, y 坐标列</div>
             <div>• <span className="text-amber-400">钻孔坐标</span>：包含孔号、x、y、孔口高程列</div>
-            <div>• <span className="text-emerald-400">钻孔数据</span>：包含孔号、顶板高程、底板高程列</div>
+            <div>• <span className="text-emerald-400">钻孔数据</span>：包含孔号、顶板高程、底板高程列（可选择多个钻孔文件）</div>
           </div>
         </div>
       )}
 
       {/* 三个独立的文件上传区 */}
       <div className="space-y-3">
-        {renderFileInput('boundary', boundaryFile, setBoundaryFile, '采区边界', '上传采区边界坐标 CSV 文件', 'blue')}
-        {renderFileInput('coordinates', coordinatesFile, setCoordinatesFile, '钻孔坐标', '上传钻孔坐标 CSV 文件', 'amber')}
-        {renderFileInput('data', dataFile, setDataFile, '钻孔数据', '上传钻孔数据 CSV 文件', 'emerald')}
+        {renderFileInput('boundary', boundaryFile, setBoundaryFile, '采区边界', '上传采区边界坐标 CSV 文件', 'blue', false)}
+        {renderFileInput('coordinates', coordinatesFile, setCoordinatesFile, '钻孔坐标', '上传钻孔坐标 CSV 文件', 'amber', false)}
+        {renderFileInput('data', dataFiles, setDataFiles, '钻孔数据', '上传钻孔数据 CSV 文件（支持多个文件）', 'emerald', true)}
       </div>
 
       {/* 上传按钮 */}
       <button
         onClick={handleUpload}
-        disabled={uploading || (!boundaryFile && !coordinatesFile && !dataFile)}
+        disabled={uploading || (!boundaryFile && !coordinatesFile && dataFiles.length === 0)}
         className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
       >
         {uploading ? (
