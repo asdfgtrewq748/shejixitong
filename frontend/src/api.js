@@ -12,7 +12,12 @@ export async function uploadBoundaryCSV(file) {
     method: 'POST',
     body: formData,
   });
-  return res.json();
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '上传失败');
+  }
+  const result = await res.json();
+  return result.data || result;
 }
 
 /**
@@ -25,7 +30,12 @@ export async function uploadBoreholeCoordinatesCSV(file) {
     method: 'POST',
     body: formData,
   });
-  return res.json();
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '上传失败');
+  }
+  const result = await res.json();
+  return result.data || result;
 }
 
 /**
@@ -38,7 +48,12 @@ export async function uploadBoreholeDataCSV(file) {
     method: 'POST',
     body: formData,
   });
-  return res.json();
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '上传失败');
+  }
+  const result = await res.json();
+  return result.data || result;
 }
 
 /**

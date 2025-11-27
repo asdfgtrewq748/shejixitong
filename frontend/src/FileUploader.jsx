@@ -57,10 +57,10 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
       if (boundaryFile) {
         try {
           onLog?.('正在上传采区边界...', 'loading');
-          const boundaryResult = await api.uploadBoundaryCSV(boundaryFile);
+          const result = await api.uploadBoundaryCSV(boundaryFile);
           setUploadStatus(prev => ({ ...prev, boundary: 'success' }));
-          results.boundary = boundaryResult.boundary;
-          onLog?.(`采区边界上传成功 [${boundaryResult.boundary?.length || 0}个顶点]`, 'success');
+          results.boundary = result.boundary;
+          onLog?.(`采区边界上传成功 [${result.boundary?.length || 0}个顶点]`, 'success');
         } catch (err) {
           setUploadStatus(prev => ({ ...prev, boundary: 'error' }));
           onLog?.(`采区边界上传失败: ${err.message}`, 'warning');
@@ -71,9 +71,9 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
       if (coordinatesFile) {
         try {
           onLog?.('正在上传钻孔坐标...', 'loading');
-          const coordResult = await api.uploadBoreholeCoordinatesCSV(coordinatesFile);
+          const result = await api.uploadBoreholeCoordinatesCSV(coordinatesFile);
           setUploadStatus(prev => ({ ...prev, coordinates: 'success' }));
-          onLog?.(`钻孔坐标上传成功 [${coordResult.count || 0}个钻孔]`, 'success');
+          onLog?.(`钻孔坐标上传成功 [${result.count || 0}个钻孔]`, 'success');
         } catch (err) {
           setUploadStatus(prev => ({ ...prev, coordinates: 'error' }));
           onLog?.(`钻孔坐标上传失败: ${err.message}`, 'warning');
@@ -130,9 +130,9 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
     }
   };
 
-  const renderFileInput = (type, file, setFile, label, description, color, isMultiple = false) => {
+  const renderFileInput = (type, fileOrFiles, setFile, label, description, color, isMultiple = false) => {
     const status = uploadStatus[type];
-    const files = isMultiple ? file : (file ? [file] : []);
+    const files = isMultiple ? fileOrFiles : (fileOrFiles ? [fileOrFiles] : []);
     const hasFiles = files.length > 0;
     
     return (

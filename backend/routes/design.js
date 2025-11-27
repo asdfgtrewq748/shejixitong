@@ -278,7 +278,7 @@ function planMainRoadway(grid, boundary, regions, minScore, maxSlope = 15, userM
 }
 
 /**
- * 规划工作面 - 条带式布局
+ * 规划工作面 - 条带式布局（符合煤矿规范）
  * 在采区范围内划分统一宽度的条带式工作面，从一侧到另一侧平行排列
  * 支持用户自定义工作面（锁定）
  */
@@ -290,128 +290,146 @@ function planWorkfaces(grid, regions, width, length, minScore, fixedWorkfaces = 
   const areaWidth = maxX - minX;
   const areaHeight = maxY - minY;
   
-  // 条带间距（巷道宽度）
-  const stripGap = 10;
+  // 煤柱宽度（按照规范，工作面之间留20-30m煤柱）
+  const pillarWidth = 25;
   
   // 根据采区形状决定条带方向
   // 如果采区较宽，则条带沿Y方向排列（水平条带）
   // 如果采区较高，则条带沿X方向排列（垂直条带）
   const isHorizontalStrips = areaWidth >= areaHeight;
   
-  // 统一工作面宽度
-  const uniformWidth = width;
+  // 工作面参数（符合煤矿规范）
+  const faceWidth = Math.min(width, 180);  // 工作面宽度：150-180m
+  const faceLength = Math.min(length, areaWidth * 0.7, areaHeight * 0.7); // 工作面长度：根据采区大小自适应
   
   let faceId = 1;
   
   if (isHorizontalStrips) {
     // 水平条带：工作面沿X方向延伸，沿Y方向依次排列
     // 每个条带的长度尽量跨越整个采区宽度
-    const stripLength = Math.min(length, areaWidth * 0.8); // 工作面长度
+    const stripLength = Math.min(faceLength, areaWidth * 0.85); // 工作面长度（沿X方向）
     const startX = minX + (areaWidth - stripLength) / 2; // 居中放置
     
-    // 从底部向上排列条带
-    let currentY = minY + stripGap;
+    // 从底部向上排列条带，留出足够的边界距离
+    let currentY = minY + 30; // 距离边界30m
     
-    while (currentY + uniformWidth <= maxY - stripGap) {
+    while (currentY + faceWidth + 30 <= maxY) { // 确保上边界也有30m距离
       // 计算该条带的平均评分
-      const faceScore = calculateAreaScore(grid, startX, currentY, stripLength, uniformWidth);
+      const faceScore = calculateAreaScore(grid, startX, currentY, stripLength, faceWidth);
       
-      // 检查该位置是否在有效区域内（至少30%的格点有效）
-      const validRatio = calculateValidRatio(grid, startX, currentY, stripLength, uniformWidth);
+      // 检查该位置是否在有效区域内（至少40%的格点有效）
+      const validRatio = calculateValidRatio(grid, startX, currentY, stripLength, faceWidth);
       
       // 检查是否与用户定义的工作面重叠
       const overlapsFixed = fixedWorkfaces.some(fixed => 
         rectanglesOverlap(
-          { x: startX, y: currentY, width: stripLength, height: uniformWidth },
+          { x: startX, y: currentY, width: stripLength, height: faceWidth },
           { x: fixed.x, y: fixed.y, width: fixed.width, height: fixed.height }
         )
       );
       
-      if (!overlapsFixed && validRatio >= 0.3 && faceScore >= minScore * 0.7) {
+      if (!overlapsFixed && validRatio >= 0.4 && faceScore >= minScore * 0.6) {
         const workface = createAxisAlignedWorkface(
-          `WF-${String(faceId++).padStart(2, '0')}`,
+          `WF-${String(faceId).padStart(2, '0')}`,
           startX,
           currentY,
           stripLength,
-          uniformWidth,
+          faceWidth,
           faceScore
         );
         workface.direction = 'horizontal';
-        workface.stripIndex = faceId - 1;
+        workface.stripIndex = faceId;
         workfaces.push(workface);
+        faceId++;
       }
       
-      currentY += uniformWidth + stripGap;
+      // 下一个工作面位置 = 当前位置 + 工作面宽度 + 煤柱宽度
+      currentY += faceWidth + pillarWidth;
     }
   } else {
     // 垂直条带：工作面沿Y方向延伸，沿X方向依次排列
-    const stripLength = Math.min(length, areaHeight * 0.8);
+    const stripLength = Math.min(faceLength, areaHeight * 0.85);
     const startY = minY + (areaHeight - stripLength) / 2;
     
-    let currentX = minX + stripGap;
+    let currentX = minX + 30; // 距离边界30m
     
-    while (currentX + uniformWidth <= maxX - stripGap) {
-      const faceScore = calculateAreaScore(grid, currentX, startY, uniformWidth, stripLength);
-      const validRatio = calculateValidRatio(grid, currentX, startY, uniformWidth, stripLength);
+    while (currentX + faceWidth + 30 <= maxX) {
+      const faceScore = calculateAreaScore(grid, currentX, startY, faceWidth, stripLength);
+      const validRatio = calculateValidRatio(grid, currentX, startY, faceWidth, stripLength);
       
       // 检查是否与用户定义的工作面重叠
       const overlapsFixed = fixedWorkfaces.some(fixed => 
         rectanglesOverlap(
-          { x: currentX, y: startY, width: uniformWidth, height: stripLength },
+          { x: currentX, y: startY, width: faceWidth, height: stripLength },
           { x: fixed.x, y: fixed.y, width: fixed.width, height: fixed.height }
         )
       );
       
-      if (!overlapsFixed && validRatio >= 0.3 && faceScore >= minScore * 0.7) {
+      if (!overlapsFixed && validRatio >= 0.4 && faceScore >= minScore * 0.6) {
         const workface = createAxisAlignedWorkface(
-          `WF-${String(faceId++).padStart(2, '0')}`,
+          `WF-${String(faceId).padStart(2, '0')}`,
           currentX,
           startY,
-          uniformWidth,
+          faceWidth,
           stripLength,
           faceScore
         );
         workface.direction = 'vertical';
-        workface.stripIndex = faceId - 1;
+        workface.stripIndex = faceId;
         workfaces.push(workface);
+        faceId++;
       }
       
-      currentX += uniformWidth + stripGap;
+      currentX += faceWidth + pillarWidth;
     }
   }
 
-  // 如果没有找到合适工作面，尝试放宽条件
+  // 如果没有找到合适工作面，在采区中心至少生成2-3个工作面
   if (workfaces.length === 0) {
-    // 在整个采区中心放置一个条带
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
+    console.log('未找到符合条件的工作面，在采区中心生成默认工作面...');
     
     if (isHorizontalStrips) {
-      const stripLen = areaWidth * 0.6;
-      const workface = createAxisAlignedWorkface(
-        'WF-01',
-        centerX - stripLen / 2,
-        centerY - uniformWidth / 2,
-        stripLen,
-        uniformWidth,
-        regions.length > 0 ? regions[0].avgScore : 50
-      );
-      workface.direction = 'horizontal';
-      workface.stripIndex = 1;
-      workfaces.push(workface);
+      // 水平条带：在采区中心生成2-3个平行工作面
+      const stripLen = Math.min(faceLength, areaWidth * 0.7);
+      const startX = minX + (areaWidth - stripLen) / 2;
+      const centerY = (minY + maxY) / 2;
+      const numFaces = Math.min(3, Math.floor((maxY - minY - 60) / (faceWidth + pillarWidth)));
+      
+      for (let i = 0; i < numFaces; i++) {
+        const offsetY = centerY - ((numFaces - 1) * (faceWidth + pillarWidth) / 2) + i * (faceWidth + pillarWidth);
+        const workface = createAxisAlignedWorkface(
+          `WF-${String(i + 1).padStart(2, '0')}`,
+          startX,
+          offsetY,
+          stripLen,
+          faceWidth,
+          regions.length > 0 ? regions[0].avgScore : 60
+        );
+        workface.direction = 'horizontal';
+        workface.stripIndex = i + 1;
+        workfaces.push(workface);
+      }
     } else {
-      const stripLen = areaHeight * 0.6;
-      const workface = createAxisAlignedWorkface(
-        'WF-01',
-        centerX - uniformWidth / 2,
-        centerY - stripLen / 2,
-        uniformWidth,
-        stripLen,
-        regions.length > 0 ? regions[0].avgScore : 50
-      );
-      workface.direction = 'vertical';
-      workface.stripIndex = 1;
-      workfaces.push(workface);
+      // 垂直条带：在采区中心生成2-3个平行工作面
+      const stripLen = Math.min(faceLength, areaHeight * 0.7);
+      const startY = minY + (areaHeight - stripLen) / 2;
+      const centerX = (minX + maxX) / 2;
+      const numFaces = Math.min(3, Math.floor((maxX - minX - 60) / (faceWidth + pillarWidth)));
+      
+      for (let i = 0; i < numFaces; i++) {
+        const offsetX = centerX - ((numFaces - 1) * (faceWidth + pillarWidth) / 2) + i * (faceWidth + pillarWidth);
+        const workface = createAxisAlignedWorkface(
+          `WF-${String(i + 1).padStart(2, '0')}`,
+          offsetX,
+          startY,
+          faceWidth,
+          stripLen,
+          regions.length > 0 ? regions[0].avgScore : 60
+        );
+        workface.direction = 'vertical';
+        workface.stripIndex = i + 1;
+        workfaces.push(workface);
+      }
     }
   }
 
@@ -459,6 +477,7 @@ function rectanglesOverlap(rect1, rect2) {
 /**
  * 规划分巷道（连接主巷道和工作面）
  * 条带式布局：主巷道沿一侧，分巷道垂直连接各工作面
+ * 采用规范的运输巷道和回风巷道布局
  */
 function planBranchRoadways(mainRoadway, workfaces, grid, roadwayWidth) {
   const branches = [];
@@ -471,34 +490,59 @@ function planBranchRoadways(mainRoadway, workfaces, grid, roadwayWidth) {
   // 根据工作面方向确定分巷道连接方式
   const isHorizontal = workfaces[0]?.direction === 'horizontal';
 
-  for (const face of workfaces) {
-    let connectPoint;
+  for (let i = 0; i < workfaces.length; i++) {
+    const face = workfaces[i];
+    let transportEntry, ventilationExit;
     
     if (isHorizontal) {
-      // 水平条带：分巷道连接到条带的左端或右端
-      // 选择距离主巷道较近的一端
-      const leftEnd = { x: face.x, y: face.y + face.length / 2 };
-      const rightEnd = { x: face.x + face.width, y: face.y + face.length / 2 };
-      const distLeft = Math.hypot(leftEnd.x - junction.x, leftEnd.y - junction.y);
-      const distRight = Math.hypot(rightEnd.x - junction.x, rightEnd.y - junction.y);
-      connectPoint = distLeft < distRight ? leftEnd : rightEnd;
+      // 水平条带：运输巷道连接左端，回风巷道连接右端
+      transportEntry = { 
+        x: Math.round(face.x), 
+        y: Math.round(face.y + face.length / 2) 
+      };
+      ventilationExit = { 
+        x: Math.round(face.x + face.width), 
+        y: Math.round(face.y + face.length / 2) 
+      };
     } else {
-      // 垂直条带：分巷道连接到条带的上端或下端
-      const topEnd = { x: face.x + face.width / 2, y: face.y };
-      const bottomEnd = { x: face.x + face.width / 2, y: face.y + face.length };
-      const distTop = Math.hypot(topEnd.x - junction.x, topEnd.y - junction.y);
-      const distBottom = Math.hypot(bottomEnd.x - junction.x, bottomEnd.y - junction.y);
-      connectPoint = distTop < distBottom ? topEnd : bottomEnd;
+      // 垂直条带：运输巷道连接下端，回风巷道连接上端
+      transportEntry = { 
+        x: Math.round(face.x + face.width / 2), 
+        y: Math.round(face.y + face.length) 
+      };
+      ventilationExit = { 
+        x: Math.round(face.x + face.width / 2), 
+        y: Math.round(face.y) 
+      };
     }
 
+    // 运输巷道（从主巷道到工作面入口）
+    const transportPath = [
+      { x: junction.x, y: junction.y, type: 'junction' },
+      { x: transportEntry.x, y: transportEntry.y, type: 'workface-entry' }
+    ];
+    
     branches.push({
-      id: `BR-${face.id.split('-')[1]}`,
+      id: `BR-T${String(i + 1).padStart(2, '0')}`, // T = Transport 运输巷道
       workfaceId: face.id,
-      path: [
-        { x: junction.x, y: junction.y, type: 'junction' },
-        { x: Math.round(connectPoint.x), y: Math.round(connectPoint.y), type: 'workface' }
-      ],
-      length: Math.round(Math.hypot(connectPoint.x - junction.x, connectPoint.y - junction.y)),
+      roadwayType: 'transport',
+      path: transportPath,
+      length: Math.round(Math.hypot(transportEntry.x - junction.x, transportEntry.y - junction.y)),
+      width: roadwayWidth
+    });
+
+    // 回风巷道（从工作面出口回到主巷道）
+    const ventPath = [
+      { x: ventilationExit.x, y: ventilationExit.y, type: 'workface-exit' },
+      { x: junction.x, y: junction.y, type: 'junction' }
+    ];
+    
+    branches.push({
+      id: `BR-V${String(i + 1).padStart(2, '0')}`, // V = Ventilation 回风巷道
+      workfaceId: face.id,
+      roadwayType: 'ventilation',
+      path: ventPath,
+      length: Math.round(Math.hypot(ventilationExit.x - junction.x, ventilationExit.y - junction.y)),
       width: roadwayWidth
     });
   }

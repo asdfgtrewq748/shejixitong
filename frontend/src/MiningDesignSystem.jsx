@@ -684,31 +684,55 @@ const MiningDesignSystem = () => {
         ctx.fillText('主巷道', mainRoad[midIdx].x, mainRoad[midIdx].y - 15)
       }
       
-      // 绘制分巷道
+      // 绘制分巷道（区分运输巷道和回风巷道）
       if (designData.branchRoadways && designData.branchRoadways.length > 0) {
         designData.branchRoadways.forEach(branch => {
           if (branch.path && branch.path.length > 1) {
-            // 分巷背景
-            ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)'
-            ctx.lineWidth = 8
-            ctx.lineCap = 'round'
-            ctx.beginPath()
-            ctx.moveTo(branch.path[0].x, branch.path[0].y)
-            branch.path.forEach(p => ctx.lineTo(p.x, p.y))
-            ctx.stroke()
+            // 根据巷道类型选择颜色
+            const isTransport = branch.roadwayType === 'transport' || branch.id?.startsWith('BR-T');
+            const isVentilation = branch.roadwayType === 'ventilation' || branch.id?.startsWith('BR-V');
             
-            // 分巷中线
-            ctx.strokeStyle = '#a855f7'
-            ctx.lineWidth = 2
-            ctx.setLineDash([10, 8])
-            ctx.lineDashOffset = -time * 1.5
-            ctx.beginPath()
-            ctx.moveTo(branch.path[0].x, branch.path[0].y)
-            branch.path.forEach(p => ctx.lineTo(p.x, p.y))
-            ctx.stroke()
-            ctx.setLineDash([])
+            const branchColor = isTransport ? '#10b981' : (isVentilation ? '#f59e0b' : '#a855f7');
+            const branchBgColor = isTransport ? 'rgba(16, 185, 129, 0.3)' : (isVentilation ? 'rgba(245, 158, 11, 0.3)' : 'rgba(168, 85, 247, 0.3)');
+            
+            // 分巷背景
+            ctx.strokeStyle = branchBgColor;
+            ctx.lineWidth = 8;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(branch.path[0].x, branch.path[0].y);
+            branch.path.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.stroke();
+            
+            // 分巷中线 - 不同类型使用不同虚线样式
+            ctx.strokeStyle = branchColor;
+            ctx.lineWidth = 2;
+            if (isTransport) {
+              ctx.setLineDash([15, 5]); // 运输巷道：长虚线
+            } else if (isVentilation) {
+              ctx.setLineDash([5, 5]); // 回风巷道：短虚线
+            } else {
+              ctx.setLineDash([10, 8]); // 其他：中等虚线
+            }
+            ctx.lineDashOffset = -time * 1.5;
+            ctx.beginPath();
+            ctx.moveTo(branch.path[0].x, branch.path[0].y);
+            branch.path.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // 巷道标签（可选，避免太拥挤）
+            if (scale > 0.5) {
+              const midIdx = Math.floor(branch.path.length / 2);
+              const midPoint = branch.path[midIdx];
+              ctx.fillStyle = branchColor;
+              ctx.font = `${Math.max(8, 10 / scale)}px sans-serif`;
+              ctx.textAlign = 'center';
+              const label = isTransport ? '运输' : (isVentilation ? '回风' : '分巷');
+              ctx.fillText(label, midPoint.x, midPoint.y - 5);
+            }
           }
-        })
+        });
       }
       
       // 绘制工作面
