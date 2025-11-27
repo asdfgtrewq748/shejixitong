@@ -1,0 +1,17 @@
+{
+  "name": "shejixitong-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智能采掘设计系统 - 后端 API",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "express": "^4.21.0",
+    "multer": "^2.0.2"
+  }
+}
