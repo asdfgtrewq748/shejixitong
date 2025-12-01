@@ -6,6 +6,7 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
   const [boundaryFile, setBoundaryFile] = useState(null);
   const [coordinatesFile, setCoordinatesFile] = useState(null);
   const [dataFiles, setDataFiles] = useState([]); // 改为数组支持多文件
+  const [targetCoalSeam, setTargetCoalSeam] = useState(''); // 目标煤层
   const [uploading, setUploading] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [uploadStatus, setUploadStatus] = useState({
@@ -80,28 +81,27 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
         }
       }
 
-      // 3. 上传钻孔数据（支持多个文件）
+      // 3. 上传钻孔分层数据（使用新API批量上传）
       if (dataFiles.length > 0) {
         try {
           onLog?.(`正在上传钻孔数据 [${dataFiles.length}个文件]...`, 'loading');
-          let successCount = 0;
-          let errorCount = 0;
           
-          for (const file of dataFiles) {
-            try {
-              await api.uploadBoreholeDataCSV(file);
-              successCount++;
-            } catch (err) {
-              errorCount++;
-              onLog?.(`${file.name} 上传失败: ${err.message}`, 'warning');
-            }
-          }
+          const result = await api.uploadBoreholeLayers(dataFiles, targetCoalSeam || null);
           
-          if (successCount > 0) {
+          if (result.results?.success?.length > 0) {
             setUploadStatus(prev => ({ ...prev, data: 'success' }));
-            onLog?.(`钻孔数据上传完成 [成功${successCount}个，失败${errorCount}个]`, 'success');
+            onLog?.(`钻孔数据上传完成 [成功${result.results.success.length}个，失败${result.results.errors.length}个]`, 'success');
+            
+            // 显示煤层信息
+            if (result.results.summary?.煤层统计) {
+              const coalInfo = Object.entries(result.results.summary.煤层统计)
+                .map(([name, stat]) => `${name}(${stat.钻孔数}孔,平均${stat.平均厚度}m)`)
+                .join(', ');
+              onLog?.(`煤层分布: ${coalInfo}`, 'info');
+            }
           } else {
             setUploadStatus(prev => ({ ...prev, data: 'error' }));
+            onLog?.(`钻孔数据上传失败`, 'warning');
           }
         } catch (err) {
           setUploadStatus(prev => ({ ...prev, data: 'error' }));
@@ -109,15 +109,22 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
         }
       }
 
-      // 4. 获取合并后的钻孔数据
-      if (coordinatesFile || dataFiles.length > 0) {
+      // 4. 合并钻孔坐标和分层数据
+      if (coordinatesFile && dataFiles.length > 0) {
         try {
-          const boreholesResult = await api.getBoreholes();
-          results.boreholes = boreholesResult;
-          onLog?.('钻孔数据合并完成', 'success');
+          onLog?.('正在合并钻孔数据...', 'loading');
+          const mergeResult = await api.mergeBoreholeData();
+          results.boreholes = mergeResult.data?.boreholes || [];
+          onLog?.(`钻孔数据合并完成 [${mergeResult.data?.count || 0}个钻孔]`, 'success');
+          
+          if (mergeResult.unmatched && mergeResult.unmatched.length > 0) {
+            onLog?.(`⚠️ ${mergeResult.unmatched.length}个钻孔未找到坐标: ${mergeResult.unmatched.join(', ')}`, 'warning');
+          }
         } catch (err) {
-          onLog?.('获取钻孔数据失败', 'warning');
+          onLog?.(`数据合并失败: ${err.message}`, 'warning');
         }
+      } else if (dataFiles.length > 0) {
+        onLog?.('⚠️ 请同时上传钻孔坐标文件以完成数据合并', 'warning');
       }
 
       // 回调通知父组件
@@ -224,17 +231,38 @@ const FileUploader = ({ onUploadComplete, onLog }) => {
           <p className="text-gray-300">请分别上传以下三种 CSV 文件：</p>
           <div className="space-y-1 text-gray-400">
             <div>• <span className="text-blue-400">采区边界</span>：包含 x, y 坐标列</div>
-            <div>• <span className="text-amber-400">钻孔坐标</span>：包含孔号、x、y、孔口高程列</div>
-            <div>• <span className="text-emerald-400">钻孔数据</span>：包含孔号、顶板高程、底板高程列（可选择多个钻孔文件）</div>
+            <div>• <span className="text-amber-400">钻孔坐标</span>：包含 钻孔名, 坐标x, 坐标y 列</div>
+            <div>• <span className="text-emerald-400">钻孔数据</span>：分层岩性数据（序号, 名称, 厚度/m 列，支持多个钻孔文件）</div>
+            <div className="text-yellow-400 mt-2">💡 系统会自动从岩层数据中识别煤层并计算埋深</div>
           </div>
+        </div>
+      )}
+
+      {/* 目标煤层选择 */}
+      {dataFiles.length > 0 && (
+        <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-lg p-3">
+          <label className="block text-xs text-yellow-400 mb-2">
+            目标煤层（可选，留空则自动选择最厚煤层）
+          </label>
+          <input
+            type="text"
+            value={targetCoalSeam}
+            onChange={(e) => setTargetCoalSeam(e.target.value)}
+            placeholder="例如: 16-3煤"
+            className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-yellow-500 focus:outline-none"
+            disabled={uploading}
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            提示：如果钻孔包含多个煤层，请指定要设计的煤层名称
+          </p>
         </div>
       )}
 
       {/* 三个独立的文件上传区 */}
       <div className="space-y-3">
-        {renderFileInput('boundary', boundaryFile, setBoundaryFile, '采区边界', '上传采区边界坐标 CSV 文件', 'blue', false)}
-        {renderFileInput('coordinates', coordinatesFile, setCoordinatesFile, '钻孔坐标', '上传钻孔坐标 CSV 文件', 'amber', false)}
-        {renderFileInput('data', dataFiles, setDataFiles, '钻孔数据', '上传钻孔数据 CSV 文件（支持多个文件）', 'emerald', true)}
+        {renderFileInput('boundary', boundaryFile, setBoundaryFile, '采区边界', '上传采区边界坐标 CSV 文件（x, y）', 'blue', false)}
+        {renderFileInput('coordinates', coordinatesFile, setCoordinatesFile, '钻孔坐标', '上传钻孔坐标 CSV 文件（钻孔名, 坐标x, 坐标y）', 'amber', false)}
+        {renderFileInput('data', dataFiles, setDataFiles, '钻孔分层数据', '上传所有钻孔的岩层CSV文件（序号, 名称, 厚度/m）', 'emerald', true)}
       </div>
 
       {/* 上传按钮 */}

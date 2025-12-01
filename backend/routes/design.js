@@ -1,44 +1,47 @@
 import { Router } from 'express';
 import store from '../store.js';
-import { 
-  findOptimalPath, 
-  simplifyPath, 
-  calculatePathScore, 
-  calculatePathLength,
-  coordToGridCell 
-} from '../utils/pathfinding.js';
 import {
   createAxisAlignedWorkface,
   createRoadway
 } from '../utils/geometry.js';
+import {
+  calculatePillarWidth,
+  calculateWorkfaceWidth,
+  calculateWorkfaceLength,
+  determineLayoutDirection,
+  getBoundaryLine,
+  calculateAreaDimensions,
+  rectanglesOverlap,
+  calculateWorkfaceDistance,
+  layoutWorkfaces,
+  selectStartBoundary
+} from '../utils/workfaceDesign.js';
+import { generateDXF } from '../utils/dxfExport.js';
 
 const router = Router();
 
 /**
  * POST /api/design
- * 根据评分网格，智能规划巷道和工作面
- * body: { 
- *   mode: 'safety' | 'economic' | 'env' | 'composite',
- *   workfaceWidth: number,  // 工作面宽度 (默认 150)
- *   workfaceLength: number, // 工作面长度 (默认 80)
- *   roadwayWidth: number,   // 巷道宽度 (默认 4)
- *   minScore: number        // 最低可开采评分 (默认 50)
- * }
+ * 基于地质模型和评分网格，按照煤矿规程设计工作面布局
  */
 router.post('/', (req, res) => {
+  // 检查必需数据
+  if (!store.geology) {
+    return res.status(400).json({ error: '请先调用 POST /api/geology 生成地质模型' });
+  }
+  
   if (!store.scores || !store.scores.grids) {
     return res.status(400).json({ error: '请先调用 POST /api/score 计算评分' });
   }
 
   const { 
-    mode = 'economic',
-    workfaceWidth = 150,
-    workfaceLength = 80,
+    mode = 'composite',
     roadwayWidth = 4,
     minScore = 50,
-    pillarWidth = 20,      // 煤柱宽度
-    maxSlope = 15,         // 最大坡度（度）
-    userEdits = null       // 用户自定义内容
+    boundaryPillar = 30,
+    userFaceWidth = null,    // 新增：用户自定义工作面宽度
+    userPillarWidth = null,  // 新增：用户自定义煤柱宽度
+    userEdits = null
   } = req.body;
 
   const grid = store.scores.grids[mode];
@@ -47,46 +50,70 @@ router.post('/', (req, res) => {
   }
 
   const boundary = store.boundary;
+  const geology = store.geology;
 
   try {
-    // 1. 识别高分区域
-    const highScoreRegions = findHighScoreRegions(grid, minScore);
+    // 使用新的工作面布局算法
+    const layoutResult = layoutWorkfaces(boundary, geology, {
+      userFaceWidth,
+      userPillarWidth,
+      boundaryPillar,
+      minScore,
+      scoreGrid: grid
+    });
     
-    // 2. 规划主巷道（考虑用户自定义）
-    const userMainPath = userEdits?.roadways?.find(r => r.id.startsWith('UR-'))?.path;
-    const mainRoadway = planMainRoadway(grid, boundary, highScoreRegions, minScore, maxSlope, userMainPath);
+    const { workfaces, pillars, stats, design: designParams } = layoutResult;
     
-    // 3. 划分工作面（考虑用户自定义）
-    const fixedWorkfaces = userEdits?.workfaces || [];
-    const workfaces = planWorkfaces(grid, highScoreRegions, workfaceWidth, workfaceLength, minScore, fixedWorkfaces);
+    // 布置主巷道（沿采区边界）
+    const mainRoadways = planMainRoadwaysOnBoundary(
+      boundary, 
+      stats.layoutDirection, 
+      roadwayWidth
+    );
     
-    // 4. 规划分巷道（连接主巷道和各工作面）
-    const branchRoadways = planBranchRoadways(mainRoadway, workfaces, grid, roadwayWidth);
+    // 生成分巷道（暂时为空，后续可扩展）
+    const branchRoadways = [];
     
-    // 5. 计算整体方案评分
-    const designScore = calculateDesignScore(grid, workfaces, mainRoadway);
+    // 计算整体方案评分
+    const designScore = calculateDesignScore(grid, workfaces, mainRoadways);
 
-    // 6. 构建统一的数据结构
-    const roadways = [
-      createRoadway('MR-01', 'main', mainRoadway.path, roadwayWidth, mainRoadway.avgScore),
-      ...branchRoadways.map((br, idx) => 
-        createRoadway(br.id, 'branch', br.path, br.width, 0, br.workfaceId)
-      )
-    ];
+    // 煤柱检查验证
+    const pillarValidation = validatePillars(
+      workfaces, 
+      mainRoadways, 
+      stats.pillarWidth, 
+      stats.layoutDirection
+    );
+    
+    // 构建统一的数据结构
+    const roadways = [...mainRoadways, ...branchRoadways];
 
     const design = {
       mode,
-      params: { workfaceWidth, workfaceLength, roadwayWidth, minScore, pillarWidth, maxSlope },
-      roadways,        // 统一的巷道列表
-      workfaces,       // 工作面列表（已包含corners）
-      // 保留向后兼容
-      mainRoadway,
-      branchRoadways,
-      highScoreRegions: highScoreRegions.map(r => ({
-        center: r.center,
-        avgScore: r.avgScore,
-        area: r.cells.length
-      })),
+      geologyParams: {
+        dipDirection: geology.dipDirection,
+        dipAngle: geology.dipAngle,
+        avgThickness: geology.avgThickness,
+        avgDepth: geology.avgDepth,
+        maxDepth: geology.maxDepth
+      },
+      designParams: {
+        layoutDirection: stats.layoutDirection,
+        workfaceWidth: stats.avgFaceWidth,
+        pillarWidth: stats.pillarWidth,
+        roadwayWidth,
+        boundaryPillar,
+        minScore,
+        faceWidthCalc: designParams.faceWidth,
+        pillarWidthCalc: designParams.pillarWidth,
+        startBoundary: designParams.startBoundary,
+        miningMethod: stats.miningMethod
+      },
+      roadways,
+      workfaces,
+      pillars,       // 新增：煤柱数据
+      stats,         // 新增：统计信息
+      pillarValidation,
       designScore,
       gridInfo: {
         minX: grid.minX,
@@ -99,8 +126,18 @@ router.post('/', (req, res) => {
     };
 
     store.design = design;
+    
+    console.log('=== 设计方案生成完成 ===');
+    console.log(`工作面数量: ${workfaces.length}`);
+    console.log(`煤柱数量: ${pillars.length}`);
+    console.log(`总开采面积: ${stats.totalArea.toFixed(0)}m²`);
+    console.log(`布局方向: ${stats.layoutDirection}`);
+    console.log(`开采方式: ${stats.miningMethod}`);
+    console.log('========================');
+    
     res.json(design);
   } catch (err) {
+    console.error('设计方案生成失败:', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -115,486 +152,116 @@ router.get('/', (_req, res) => {
   res.json(store.design);
 });
 
+/**
+ * GET /api/design/export/dxf
+ * 导出设计方案为DXF格式
+ */
+router.get('/export/dxf', (req, res) => {
+  if (!store.design) {
+    return res.status(404).json({ error: '尚无设计方案' });
+  }
+  
+  try {
+    const dxfContent = generateDXF(store.design, store.boundary);
+    
+    // 设置响应头，提示浏览器下载文件
+    res.setHeader('Content-Type', 'application/dxf');
+    res.setHeader('Content-Disposition', `attachment; filename="mining_design_${Date.now()}.dxf"`);
+    
+    res.send(dxfContent);
+  } catch (err) {
+    res.status(500).json({ error: '导出DXF失败: ' + err.message });
+  }
+});
+
 // ==================== 核心算法 ====================
 
 /**
- * 识别高分区域（连通区域聚类）
+ * 在采区边界布置主巷道
  */
-function findHighScoreRegions(grid, minScore) {
-  const { data, minX, minY, stepX, stepY, resolution } = grid;
-  const visited = Array.from({ length: resolution + 1 }, () => Array(resolution + 1).fill(false));
-  const regions = [];
-
-  for (let row = 0; row <= resolution; row++) {
-    for (let col = 0; col <= resolution; col++) {
-      if (visited[row][col] || data[row][col] === null || data[row][col] < minScore) {
-        continue;
-      }
-      
-      // BFS 找连通区域
-      const region = { cells: [], scores: [] };
-      const queue = [[row, col]];
-      visited[row][col] = true;
-
-      while (queue.length > 0) {
-        const [r, c] = queue.shift();
-        const score = data[r][c];
-        const x = minX + c * stepX;
-        const y = minY + r * stepY;
-        
-        region.cells.push({ row: r, col: c, x, y, score });
-        region.scores.push(score);
-
-        // 8邻域搜索
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            if (dr === 0 && dc === 0) continue;
-            const nr = r + dr, nc = c + dc;
-            if (nr < 0 || nr > resolution || nc < 0 || nc > resolution) continue;
-            if (visited[nr][nc]) continue;
-            if (data[nr][nc] === null || data[nr][nc] < minScore) continue;
-            visited[nr][nc] = true;
-            queue.push([nr, nc]);
-          }
-        }
-      }
-
-      if (region.cells.length >= 4) { // 至少4个格子才算有效区域
-        const avgScore = region.scores.reduce((a, b) => a + b, 0) / region.scores.length;
-        const cx = region.cells.reduce((s, c) => s + c.x, 0) / region.cells.length;
-        const cy = region.cells.reduce((s, c) => s + c.y, 0) / region.cells.length;
-        regions.push({
-          ...region,
-          avgScore: Math.round(avgScore * 10) / 10,
-          center: { x: Math.round(cx), y: Math.round(cy) }
-        });
-      }
-    }
-  }
-
-  // 按平均分排序
-  return regions.sort((a, b) => b.avgScore - a.avgScore);
-}
-
-/**
- * 规划主巷道
- * 使用 A* 算法从边界入口点到高分区域中心，遵循煤矿规程约束
- */
-function planMainRoadway(grid, boundary, regions, minScore, maxSlope = 15, userMainPath = null) {
-  // 如果用户提供了主巷道路径，直接使用
-  if (userMainPath && userMainPath.length >= 2) {
-    const avgScore = calculatePathScore(grid, userMainPath);
-    const length = calculatePathLength(userMainPath);
-    return {
-      path: userMainPath,
-      length: Math.round(length),
-      avgScore: Math.round(avgScore * 10) / 10,
-      algorithm: 'user-defined'
-    };
-  }
-
-  if (regions.length === 0) {
-    throw new Error('未找到符合条件的高分区域');
-  }
-
-  const { data, minX, minY, stepX, stepY, resolution } = grid;
+function planMainRoadwaysOnBoundary(boundary, layoutDirection, roadwayWidth) {
+  const roadways = [];
   
-  // 找最佳入口点（边界上评分最高的位置）
-  let bestEntry = { x: boundary[0].x, y: boundary[0].y, score: 0 };
-  
-  for (const point of boundary) {
-    const col = Math.round((point.x - minX) / stepX);
-    const row = Math.round((point.y - minY) / stepY);
-    if (row >= 0 && row <= resolution && col >= 0 && col <= resolution) {
-      const score = data[row]?.[col] || 0;
-      if (score > bestEntry.score) {
-        bestEntry = { x: point.x, y: point.y, score };
-      }
-    }
-  }
-
-  // 目标点：最大高分区域的中心
-  const target = regions[0].center;
-
-  // 将坐标转换为网格单元
-  const startCell = coordToGridCell(bestEntry.x, bestEntry.y, grid);
-  const goalCell = coordToGridCell(target.x, target.y, grid);
-
-  try {
-    // 使用 A* 算法寻找最优路径
-    const rawPath = findOptimalPath(grid, startCell, goalCell, {
-      maxSlope,
-      minScore,
-      scoreThreshold: minScore + 10,
-      lowScorePenalty: 30,
-      boundary
-    });
-
-    // 简化路径（移除冗余点）
-    const path = simplifyPath(rawPath, 10);
-
-    // 添加路径节点类型标记
-    if (path.length > 0) {
-      path[0].type = 'entry';
-      path[path.length - 1].type = 'junction';
-      for (let i = 1; i < path.length - 1; i++) {
-        path[i].type = 'waypoint';
-      }
-    }
-
-    // 计算路径评分和长度
-    const avgScore = calculatePathScore(grid, path);
-    const length = calculatePathLength(path);
-
-    return {
-      path,
-      length: Math.round(length),
-      avgScore: Math.round(avgScore * 10) / 10,
-      algorithm: 'A*'
-    };
-  } catch (error) {
-    // 如果 A* 失败，回退到简单路径
-    console.warn('A* 路径搜索失败，使用简化路径:', error.message);
+  if (layoutDirection === 'horizontal') {
+    // 水平布局：主巷道在北、南边界
+    const northBoundary = getBoundaryLine(boundary, 'north');
+    const southBoundary = getBoundaryLine(boundary, 'south');
     
-    const midX = (bestEntry.x + target.x) / 2;
-    const midY = (bestEntry.y + target.y) / 2;
-
-    const path = [
-      { x: Math.round(bestEntry.x), y: Math.round(bestEntry.y), type: 'entry' },
-      { x: Math.round(midX), y: Math.round(midY), type: 'waypoint' },
-      { x: target.x, y: target.y, type: 'junction' }
-    ];
-
-    const avgScore = calculatePathScore(grid, path);
-    const length = calculatePathLength(path);
-
-    return {
-      path,
-      length: Math.round(length),
-      avgScore: Math.round(avgScore * 10) / 10,
-      algorithm: 'fallback'
-    };
-  }
-}
-
-/**
- * 规划工作面 - 条带式布局（符合煤矿规范）
- * 在采区范围内划分统一宽度的条带式工作面，从一侧到另一侧平行排列
- * 支持用户自定义工作面（锁定）
- */
-function planWorkfaces(grid, regions, width, length, minScore, fixedWorkfaces = []) {
-  const workfaces = [...fixedWorkfaces]; // 首先包含用户锁定的工作面
-  const { minX, maxX, minY, maxY, stepX, stepY, data, resolution } = grid;
-  
-  // 计算采区的有效范围（基于边界或网格范围）
-  const areaWidth = maxX - minX;
-  const areaHeight = maxY - minY;
-  
-  // 煤柱宽度（按照规范，工作面之间留20-30m煤柱）
-  const pillarWidth = 25;
-  
-  // 根据采区形状决定条带方向
-  // 如果采区较宽，则条带沿Y方向排列（水平条带）
-  // 如果采区较高，则条带沿X方向排列（垂直条带）
-  const isHorizontalStrips = areaWidth >= areaHeight;
-  
-  // 工作面参数（符合煤矿规范）
-  const faceWidth = Math.min(width, 180);  // 工作面宽度：150-180m
-  const faceLength = Math.min(length, areaWidth * 0.7, areaHeight * 0.7); // 工作面长度：根据采区大小自适应
-  
-  let faceId = 1;
-  
-  if (isHorizontalStrips) {
-    // 水平条带：工作面沿X方向延伸，沿Y方向依次排列
-    // 每个条带的长度尽量跨越整个采区宽度
-    const stripLength = Math.min(faceLength, areaWidth * 0.85); // 工作面长度（沿X方向）
-    const startX = minX + (areaWidth - stripLength) / 2; // 居中放置
-    
-    // 从底部向上排列条带，留出足够的边界距离
-    let currentY = minY + 30; // 距离边界30m
-    
-    while (currentY + faceWidth + 30 <= maxY) { // 确保上边界也有30m距离
-      // 计算该条带的平均评分
-      const faceScore = calculateAreaScore(grid, startX, currentY, stripLength, faceWidth);
-      
-      // 检查该位置是否在有效区域内（至少40%的格点有效）
-      const validRatio = calculateValidRatio(grid, startX, currentY, stripLength, faceWidth);
-      
-      // 检查是否与用户定义的工作面重叠
-      const overlapsFixed = fixedWorkfaces.some(fixed => 
-        rectanglesOverlap(
-          { x: startX, y: currentY, width: stripLength, height: faceWidth },
-          { x: fixed.x, y: fixed.y, width: fixed.width, height: fixed.height }
-        )
-      );
-      
-      if (!overlapsFixed && validRatio >= 0.4 && faceScore >= minScore * 0.6) {
-        const workface = createAxisAlignedWorkface(
-          `WF-${String(faceId).padStart(2, '0')}`,
-          startX,
-          currentY,
-          stripLength,
-          faceWidth,
-          faceScore
-        );
-        workface.direction = 'horizontal';
-        workface.stripIndex = faceId;
-        workfaces.push(workface);
-        faceId++;
-      }
-      
-      // 下一个工作面位置 = 当前位置 + 工作面宽度 + 煤柱宽度
-      currentY += faceWidth + pillarWidth;
-    }
+    roadways.push(
+      createRoadway('MR-N', 'main', northBoundary, roadwayWidth, 0),
+      createRoadway('MR-S', 'main', southBoundary, roadwayWidth, 0)
+    );
   } else {
-    // 垂直条带：工作面沿Y方向延伸，沿X方向依次排列
-    const stripLength = Math.min(faceLength, areaHeight * 0.85);
-    const startY = minY + (areaHeight - stripLength) / 2;
+    // 垂直布局：主巷道在东、西边界
+    const eastBoundary = getBoundaryLine(boundary, 'east');
+    const westBoundary = getBoundaryLine(boundary, 'west');
     
-    let currentX = minX + 30; // 距离边界30m
-    
-    while (currentX + faceWidth + 30 <= maxX) {
-      const faceScore = calculateAreaScore(grid, currentX, startY, faceWidth, stripLength);
-      const validRatio = calculateValidRatio(grid, currentX, startY, faceWidth, stripLength);
-      
-      // 检查是否与用户定义的工作面重叠
-      const overlapsFixed = fixedWorkfaces.some(fixed => 
-        rectanglesOverlap(
-          { x: currentX, y: startY, width: faceWidth, height: stripLength },
-          { x: fixed.x, y: fixed.y, width: fixed.width, height: fixed.height }
-        )
-      );
-      
-      if (!overlapsFixed && validRatio >= 0.4 && faceScore >= minScore * 0.6) {
-        const workface = createAxisAlignedWorkface(
-          `WF-${String(faceId).padStart(2, '0')}`,
-          currentX,
-          startY,
-          faceWidth,
-          stripLength,
-          faceScore
-        );
-        workface.direction = 'vertical';
-        workface.stripIndex = faceId;
-        workfaces.push(workface);
-        faceId++;
-      }
-      
-      currentX += faceWidth + pillarWidth;
-    }
+    roadways.push(
+      createRoadway('MR-E', 'main', eastBoundary, roadwayWidth, 0),
+      createRoadway('MR-W', 'main', westBoundary, roadwayWidth, 0)
+    );
   }
-
-  // 如果没有找到合适工作面，在采区中心至少生成2-3个工作面
-  if (workfaces.length === 0) {
-    console.log('未找到符合条件的工作面，在采区中心生成默认工作面...');
-    
-    if (isHorizontalStrips) {
-      // 水平条带：在采区中心生成2-3个平行工作面
-      const stripLen = Math.min(faceLength, areaWidth * 0.7);
-      const startX = minX + (areaWidth - stripLen) / 2;
-      const centerY = (minY + maxY) / 2;
-      const numFaces = Math.min(3, Math.floor((maxY - minY - 60) / (faceWidth + pillarWidth)));
-      
-      for (let i = 0; i < numFaces; i++) {
-        const offsetY = centerY - ((numFaces - 1) * (faceWidth + pillarWidth) / 2) + i * (faceWidth + pillarWidth);
-        const workface = createAxisAlignedWorkface(
-          `WF-${String(i + 1).padStart(2, '0')}`,
-          startX,
-          offsetY,
-          stripLen,
-          faceWidth,
-          regions.length > 0 ? regions[0].avgScore : 60
-        );
-        workface.direction = 'horizontal';
-        workface.stripIndex = i + 1;
-        workfaces.push(workface);
-      }
-    } else {
-      // 垂直条带：在采区中心生成2-3个平行工作面
-      const stripLen = Math.min(faceLength, areaHeight * 0.7);
-      const startY = minY + (areaHeight - stripLen) / 2;
-      const centerX = (minX + maxX) / 2;
-      const numFaces = Math.min(3, Math.floor((maxX - minX - 60) / (faceWidth + pillarWidth)));
-      
-      for (let i = 0; i < numFaces; i++) {
-        const offsetX = centerX - ((numFaces - 1) * (faceWidth + pillarWidth) / 2) + i * (faceWidth + pillarWidth);
-        const workface = createAxisAlignedWorkface(
-          `WF-${String(i + 1).padStart(2, '0')}`,
-          offsetX,
-          startY,
-          faceWidth,
-          stripLen,
-          regions.length > 0 ? regions[0].avgScore : 60
-        );
-        workface.direction = 'vertical';
-        workface.stripIndex = i + 1;
-        workfaces.push(workface);
-      }
-    }
-  }
-
-  return workfaces;
+  
+  return roadways;
 }
 
 /**
- * 计算矩形区域内有效格点的比例
+ * 验证煤柱宽度
  */
-function calculateValidRatio(grid, x, y, width, height) {
-  const { data, minX, minY, stepX, stepY, resolution } = grid;
-  let valid = 0, total = 0;
-
-  const startCol = Math.floor((x - minX) / stepX);
-  const endCol = Math.ceil((x + width - minX) / stepX);
-  const startRow = Math.floor((y - minY) / stepY);
-  const endRow = Math.ceil((y + height - minY) / stepY);
-
-  for (let row = startRow; row <= endRow && row <= resolution; row++) {
-    for (let col = startCol; col <= endCol && col <= resolution; col++) {
-      if (row >= 0 && col >= 0) {
-        total++;
-        if (data[row]?.[col] !== null) {
-          valid++;
-        }
-      }
-    }
-  }
-
-  return total > 0 ? valid / total : 0;
-}
-
-/**
- * 检查两个矩形是否重叠
- */
-function rectanglesOverlap(rect1, rect2) {
-  return !(
-    rect1.x + rect1.width < rect2.x ||
-    rect2.x + rect2.width < rect1.x ||
-    rect1.y + rect1.height < rect2.y ||
-    rect2.y + rect2.height < rect1.y
-  );
-}
-
-/**
- * 规划分巷道（连接主巷道和工作面）
- * 条带式布局：主巷道沿一侧，分巷道垂直连接各工作面
- * 采用规范的运输巷道和回风巷道布局
- */
-function planBranchRoadways(mainRoadway, workfaces, grid, roadwayWidth) {
-  const branches = [];
+function validatePillars(workfaces, mainRoadways, designPillarWidth, layoutDirection) {
+  const warnings = [];
+  const measurements = [];
   
-  if (workfaces.length === 0) return branches;
-  
-  // 获取主巷道终点作为分巷道起点
-  const junction = mainRoadway.path[mainRoadway.path.length - 1];
-  
-  // 根据工作面方向确定分巷道连接方式
-  const isHorizontal = workfaces[0]?.direction === 'horizontal';
-
-  for (let i = 0; i < workfaces.length; i++) {
-    const face = workfaces[i];
-    let transportEntry, ventilationExit;
-    
-    if (isHorizontal) {
-      // 水平条带：运输巷道连接左端，回风巷道连接右端
-      transportEntry = { 
-        x: Math.round(face.x), 
-        y: Math.round(face.y + face.length / 2) 
-      };
-      ventilationExit = { 
-        x: Math.round(face.x + face.width), 
-        y: Math.round(face.y + face.length / 2) 
-      };
-    } else {
-      // 垂直条带：运输巷道连接下端，回风巷道连接上端
-      transportEntry = { 
-        x: Math.round(face.x + face.width / 2), 
-        y: Math.round(face.y + face.length) 
-      };
-      ventilationExit = { 
-        x: Math.round(face.x + face.width / 2), 
-        y: Math.round(face.y) 
-      };
-    }
-
-    // 运输巷道（从主巷道到工作面入口）
-    const transportPath = [
-      { x: junction.x, y: junction.y, type: 'junction' },
-      { x: transportEntry.x, y: transportEntry.y, type: 'workface-entry' }
-    ];
-    
-    branches.push({
-      id: `BR-T${String(i + 1).padStart(2, '0')}`, // T = Transport 运输巷道
-      workfaceId: face.id,
-      roadwayType: 'transport',
-      path: transportPath,
-      length: Math.round(Math.hypot(transportEntry.x - junction.x, transportEntry.y - junction.y)),
-      width: roadwayWidth
+  // 使用pillars数组验证，如果没有则使用工作面间距
+  for (let i = 0; i < workfaces.length - 1; i++) {
+    const distance = calculateWorkfaceDistance(workfaces[i], workfaces[i + 1], layoutDirection);
+    measurements.push({
+      face1: workfaces[i].id,
+      face2: workfaces[i + 1].id,
+      distance: Math.round(distance),
+      designed: designPillarWidth
     });
-
-    // 回风巷道（从工作面出口回到主巷道）
-    const ventPath = [
-      { x: ventilationExit.x, y: ventilationExit.y, type: 'workface-exit' },
-      { x: junction.x, y: junction.y, type: 'junction' }
-    ];
     
-    branches.push({
-      id: `BR-V${String(i + 1).padStart(2, '0')}`, // V = Ventilation 回风巷道
-      workfaceId: face.id,
-      roadwayType: 'ventilation',
-      path: ventPath,
-      length: Math.round(Math.hypot(ventilationExit.x - junction.x, ventilationExit.y - junction.y)),
-      width: roadwayWidth
-    });
-  }
-
-  return branches;
-}
-
-/**
- * 计算矩形区域的平均评分
- */
-function calculateAreaScore(grid, x, y, width, height) {
-  const { data, minX, minY, stepX, stepY, resolution } = grid;
-  let total = 0, count = 0;
-
-  const startCol = Math.floor((x - minX) / stepX);
-  const endCol = Math.ceil((x + width - minX) / stepX);
-  const startRow = Math.floor((y - minY) / stepY);
-  const endRow = Math.ceil((y + height - minY) / stepY);
-
-  for (let row = startRow; row <= endRow && row <= resolution; row++) {
-    for (let col = startCol; col <= endCol && col <= resolution; col++) {
-      if (row >= 0 && col >= 0 && data[row]?.[col] !== null) {
-        total += data[row][col];
-        count++;
-      }
+    if (Math.abs(distance - designPillarWidth) > 2) {
+      warnings.push(`工作面 ${workfaces[i].id} 与 ${workfaces[i + 1].id} 之间煤柱宽度 ${Math.round(distance)}m 偏离设计值 ${designPillarWidth}m`);
     }
   }
-
-  return count > 0 ? total / count : 0;
+  
+  return {
+    isValid: warnings.length === 0,
+    warnings,
+    measurements,
+    avgPillarWidth: measurements.length > 0 
+      ? Math.round(measurements.reduce((sum, m) => sum + m.distance, 0) / measurements.length)
+      : designPillarWidth
+  };
 }
-
-// calculatePathLength 已从 pathfinding.js 导入，移除本地定义
 
 /**
  * 计算整体设计方案评分
  */
-function calculateDesignScore(grid, workfaces, mainRoadway) {
-  if (workfaces.length === 0) return 0;
+function calculateDesignScore(grid, workfaces, mainRoadways) {
+  if (workfaces.length === 0) return {
+    overall: 0,
+    avgFaceScore: 0,
+    totalArea: 0,
+    workfaceCount: 0,
+    roadwayLength: 0
+  };
 
-  const avgFaceScore = workfaces.reduce((s, f) => s + f.avgScore, 0) / workfaces.length;
-  const totalArea = workfaces.reduce((s, f) => s + f.width * f.length, 0);
-  const roadwayScore = mainRoadway.avgScore;
+  const avgFaceScore = workfaces.reduce((s, f) => s + (f.avgScore || 100), 0) / workfaces.length;
+  const totalArea = workfaces.reduce((s, f) => s + (f.area || f.width * f.length), 0);
+  const roadwayLength = mainRoadways.reduce((s, r) => s + r.length, 0);
 
-  // 综合评分：60% 工作面评分 + 30% 开采面积 + 10% 巷道安全性
-  const score = avgFaceScore * 0.6 + Math.min(100, totalArea / 500) * 0.3 + roadwayScore * 0.1;
+  // 综合评分：70% 工作面评分 + 30% 开采面积
+  const score = avgFaceScore * 0.7 + Math.min(100, totalArea / 1000) * 0.3;
   
   return {
     overall: Math.round(score * 10) / 10,
     avgFaceScore: Math.round(avgFaceScore * 10) / 10,
-    totalArea,
+    totalArea: Math.round(totalArea),
     workfaceCount: workfaces.length,
-    roadwayLength: mainRoadway.length
+    roadwayLength: Math.round(roadwayLength)
   };
 }
 

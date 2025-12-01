@@ -28,6 +28,10 @@ router.post('/', (req, res) => {
       strike: geology.strike,
       dipDirection: geology.dipDirection,
       dipAngle: geology.dipAngle,
+      avgThickness: geology.avgThickness,
+      avgDepth: geology.avgDepth,
+      maxDepth: geology.maxDepth,
+      minDepth: geology.minDepth,
       gridInfo: geology.gridInfo,
       generatedAt: geology.generatedAt
     });
@@ -57,12 +61,16 @@ router.get('/summary', (req, res) => {
     return res.status(404).json({ error: '尚未生成地质模型' });
   }
 
-  const { strike, dipDirection, dipAngle, gridInfo, generatedAt } = store.geology;
+  const { strike, dipDirection, dipAngle, avgThickness, avgDepth, maxDepth, minDepth, gridInfo, generatedAt } = store.geology;
   
   res.json({
     strike,
     dipDirection,
     dipAngle,
+    avgThickness,
+    avgDepth,
+    maxDepth,
+    minDepth,
     gridInfo,
     generatedAt
   });

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>钻孔数据上传测试</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 50px auto; padding: 20px; }
+    .section { margin: 30px 0; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+    h2 { color: #333; }
+    input[type="file"] { margin: 10px 0; }
+    button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px; white-space: pre-wrap; font-family: monospace; max-height: 400px; overflow-y: auto; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    .info { color: #666; font-size: 14px; margin-top: 10px; }
+    .coal-select { margin: 15px 0; padding: 10px; background: #fff3cd; border-radius: 4px; }
+    .coal-select select { padding: 5px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>钻孔数据上传测试</h1>
+  
+  <!-- 步骤1: 上传采区边界 -->
+  <div class="section">
+    <h2>步骤 1: 上传采区边界坐标</h2>
+    <input type="file" id="boundaryFile" accept=".csv">
+    <button onclick="uploadBoundary()">上传边界</button>
+    <div class="info">📝 文件格式: 敏东采区坐标.csv（包含 x, y 列）</div>
+    <div id="boundaryResult"></div>
+  </div>
+  
+  <!-- 步骤2: 上传钻孔坐标 -->
+  <div class="section">
+    <h2>步骤 2: 上传钻孔坐标</h2>
+    <input type="file" id="coordinatesFile" accept=".csv">
+    <button onclick="uploadCoordinates()">上传坐标</button>
+    <div class="info">📝 文件格式: 敏东钻孔对应坐标.csv（包含 钻孔名, 坐标x, 坐标y）</div>
+    <div id="coordinatesResult"></div>
+  </div>
+  
+  <!-- 步骤3: 上传钻孔分层数据 -->
+  <div class="section">
+    <h2>步骤 3: 上传钻孔分层数据（CSV文件）</h2>
+    <div class="coal-select">
+      <label>目标煤层（可选，留空则自动选择最厚煤层）：</label>
+      <input type="text" id="targetCoalSeam" placeholder="如: 16-3煤" style="width: 200px;">
+    </div>
+    <input type="file" id="boreholeFiles" accept=".csv" multiple>
+    <button onclick="uploadBoreholeData()">上传钻孔数据</button>
+    <div class="info">📝 选择所有钻孔CSV文件（50-14.csv, 50-15.csv, ...）</div>
+    <div id="boreholeResult"></div>
+  </div>
+  
+  <!-- 步骤4: 合并数据 -->
+  <div class="section">
+    <h2>步骤 4: 合并坐标和分层数据</h2>
+    <button onclick="mergeData()">合并数据</button>
+    <div class="info">⚙️ 将钻孔坐标和分层数据合并</div>
+    <div id="mergeResult"></div>
+  </div>
+  
+  <!-- 步骤5: 查看可用煤层 -->
+  <div class="section">
+    <h2>步骤 5: 查看可用煤层</h2>
+    <button onclick="getCoalSeams()">获取煤层列表</button>
+    <div id="coalSeamsResult"></div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3001/api';
+
+    async function uploadBoundary() {
+      const fileInput = document.getElementById('boundaryFile');
+      const file = fileInput.files[0];
+      if (!file) {
+        alert('请选择边界文件');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const response = await fetch(`${API_BASE}/upload/boundary`, {
+          method: 'POST',
+          body: formData
+        });
+        const result = await response.json();
+        showResult('boundaryResult', result, response.ok);
+      } catch (err) {
+        showResult('boundaryResult', { error: err.message }, false);
+      }
+    }
+
+    async function uploadCoordinates() {
+      const fileInput = document.getElementById('coordinatesFile');
+      const file = fileInput.files[0];
+      if (!file) {
+        alert('请选择坐标文件');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const response = await fetch(`${API_BASE}/upload/borehole-coordinates`, {
+          method: 'POST',
+          body: formData
+        });
+        const result = await response.json();
+        showResult('coordinatesResult', result, response.ok);
+      } catch (err) {
+        showResult('coordinatesResult', { error: err.message }, false);
+      }
+    }
+
+    async function uploadBoreholeData() {
+      const fileInput = document.getElementById('boreholeFiles');
+      const targetCoalSeam = document.getElementById('targetCoalSeam').value.trim();
+      const files = fileInput.files;
+      
+      if (files.length === 0) {
+        alert('请选择钻孔文件');
+        return;
+      }
+
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
+      }
+      
+      if (targetCoalSeam) {
+        formData.append('targetCoalSeam', targetCoalSeam);
+      }
+
+      try {
+        showResult('boreholeResult', { message: `正在上传 ${files.length} 个文件...` }, true);
+        
+        const response = await fetch(`${API_BASE}/boreholes/batch-upload`, {
+          method: 'POST',
+          body: formData
+        });
+        const result = await response.json();
+        showResult('boreholeResult', result, response.ok);
+      } catch (err) {
+        showResult('boreholeResult', { error: err.message }, false);
+      }
+    }
+
+    async function mergeData() {
+      try {
+        const response = await fetch(`${API_BASE}/boreholes/merge-with-coordinates`, {
+          method: 'POST'
+        });
+        const result = await response.json();
+        showResult('mergeResult', result, response.ok);
+      } catch (err) {
+        showResult('mergeResult', { error: err.message }, false);
+      }
+    }
+
+    async function getCoalSeams() {
+      try {
+        const response = await fetch(`${API_BASE}/boreholes/coal-seams`);
+        const result = await response.json();
+        showResult('coalSeamsResult', result, response.ok);
+      } catch (err) {
+        showResult('coalSeamsResult', { error: err.message }, false);
+      }
+    }
+
+    function showResult(elementId, data, success) {
+      const resultDiv = document.getElementById(elementId);
+      resultDiv.className = 'result ' + (success ? 'success' : 'error');
+      resultDiv.textContent = JSON.stringify(data, null, 2);
+    }
+  </script>
+</body>
+</html>

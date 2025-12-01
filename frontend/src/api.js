@@ -87,6 +87,54 @@ export async function getUploadStatus() {
   return res.json();
 }
 
+/**
+ * 批量上传钻孔分层数据（新API）
+ */
+export async function uploadBoreholeLayers(files, targetCoalSeam = null) {
+  const formData = new FormData();
+  files.forEach(file => {
+    formData.append('files', file);
+  });
+  if (targetCoalSeam) {
+    formData.append('targetCoalSeam', targetCoalSeam);
+  }
+  const res = await fetch(`${API_BASE}/boreholes/batch-upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '上传失败');
+  }
+  return res.json();
+}
+
+/**
+ * 合并钻孔坐标和分层数据
+ */
+export async function mergeBoreholeData() {
+  const res = await fetch(`${API_BASE}/boreholes/merge-with-coordinates`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '合并失败');
+  }
+  return res.json();
+}
+
+/**
+ * 获取可用的煤层列表
+ */
+export async function getCoalSeams() {
+  const res = await fetch(`${API_BASE}/boreholes/coal-seams`);
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '获取煤层列表失败');
+  }
+  return res.json();
+}
+
 // ==================== 原有 API ====================
 
 /**
@@ -175,4 +223,49 @@ export async function generateDesign(options = {}) {
 export async function getDesign() {
   const res = await fetch(`${API_BASE}/design`);
   return res.json();
+}
+
+/**
+ * 生成地质模型
+ */
+export async function generateGeology(resolution = 50) {
+  const res = await fetch(`${API_BASE}/geology`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolution }),
+  });
+  return res.json();
+}
+
+/**
+ * 获取地质模型
+ */
+export async function getGeology() {
+  const res = await fetch(`${API_BASE}/geology`);
+  return res.json();
+}
+
+/**
+ * 导出设计方案为DXF文件
+ */
+export async function exportDesignDXF() {
+  const res = await fetch(`${API_BASE}/design/export/dxf`);
+  
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || '导出失败');
+  }
+  
+  // 获取文件blob
+  const blob = await res.blob();
+  
+  // 创建下载链接
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mining_design_${Date.now()}.dxf`;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 }

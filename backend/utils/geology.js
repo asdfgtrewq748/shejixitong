@@ -4,6 +4,59 @@
  */
 
 /**
+ * 验证地质数据有效性
+ * @param {Array} boreholes - 钻孔数据数组
+ * @param {Array} boundary - 采区边界
+ * @returns {Object} 验证结果 {isValid, errors, warnings}
+ */
+export function validateGeologyData(boreholes, boundary) {
+  const errors = [];
+  const warnings = [];
+  
+  // 验证钻孔数据
+  if (!boreholes || boreholes.length === 0) {
+    errors.push('钻孔数据为空');
+  } else {
+    if (boreholes.length < 3) {
+      warnings.push(`钻孔数量较少(${boreholes.length}个)，可能影响建模精度，建议至少3个钻孔`);
+    }
+    
+    // 验证每个钻孔的必要字段
+    boreholes.forEach((bh, idx) => {
+      if (bh.x === null || bh.x === undefined || isNaN(bh.x)) {
+        errors.push(`钻孔[${idx}] X坐标无效`);
+      }
+      if (bh.y === null || bh.y === undefined || isNaN(bh.y)) {
+        errors.push(`钻孔[${idx}] Y坐标无效`);
+      }
+      if (!bh.topElevation && !bh.bottomElevation && !bh.coalThickness) {
+        warnings.push(`钻孔[${idx}] (${bh.name || 'unnamed'}) 缺少高程或厚度数据`);
+      }
+    });
+  }
+  
+  // 验证边界数据
+  if (!boundary || boundary.length < 3) {
+    errors.push('采区边界点数量不足（至少需要3个点）');
+  } else {
+    boundary.forEach((pt, idx) => {
+      if (pt.x === null || pt.x === undefined || isNaN(pt.x)) {
+        errors.push(`边界点[${idx}] X坐标无效`);
+      }
+      if (pt.y === null || pt.y === undefined || isNaN(pt.y)) {
+        errors.push(`边界点[${idx}] Y坐标无效`);
+      }
+    });
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings
+  };
+}
+
+/**
  * 生成地质模型
  * @param {Array} boreholes - 钻孔数据数组
  * @param {Object} boundary - 采区边界
@@ -11,8 +64,15 @@
  * @returns {Object} 地质模型对象
  */
 export function generateGeologyModel(boreholes, boundary, resolution = 50) {
-  if (!boreholes || boreholes.length === 0) {
-    throw new Error('钻孔数据为空');
+  // 验证输入数据
+  const validation = validateGeologyData(boreholes, boundary);
+  if (!validation.isValid) {
+    throw new Error('数据验证失败: ' + validation.errors.join('; '));
+  }
+  
+  // 输出警告信息
+  if (validation.warnings.length > 0) {
+    console.warn('地质数据警告:', validation.warnings);
   }
 
   // 计算边界范围
@@ -46,13 +106,23 @@ export function generateGeologyModel(boreholes, boundary, resolution = 50) {
 
   const { strike, dipDirection, dipAngle } = calculateStrikeAndDip(boreholePoints);
 
-  return {
+  // 5. 计算煤层平均厚度和埋深
+  const avgThickness = calculateAverageThickness(boreholes);
+  const avgDepth = calculateAverageDepth(boreholes);
+  const maxDepth = Math.max(...boreholes.map(b => b.depth || b.bottomElevation || 0).filter(d => d > 0));
+  const minDepth = Math.min(...boreholes.map(b => b.depth || b.topElevation || Infinity).filter(d => d < Infinity));
+
+  const model = {
     surfaceTop,
     surfaceBottom,
     thicknessGrid,
     strike,          // 走向方位角（度，0-360）
     dipDirection,    // 倾向方位角（度，0-360）
     dipAngle,        // 倾角（度）
+    avgThickness,    // 平均煤层厚度（m）
+    avgDepth,        // 平均埋深（m）
+    maxDepth,        // 最大埋深（m）
+    minDepth,        // 最小埋深（m）
     gridInfo: {
       minX,
       maxX,
@@ -62,8 +132,38 @@ export function generateGeologyModel(boreholes, boundary, resolution = 50) {
       stepY,
       resolution
     },
+    validation,      // 包含验证信息
     generatedAt: new Date().toISOString()
   };
+  
+  // 输出关键参数用于验证
+  console.log('=== 地质模型生成完成 ===');
+  console.log(`煤层倾向: ${dipDirection.toFixed(1)}° (${getDirectionName(dipDirection)})`);
+  console.log(`煤层倾角: ${dipAngle.toFixed(1)}°`);
+  console.log(`煤层走向: ${strike.toFixed(1)}° (${getDirectionName(strike)})`);
+  console.log(`平均厚度: ${avgThickness.toFixed(2)}m`);
+  console.log(`平均埋深: ${avgDepth.toFixed(2)}m`);
+  console.log(`埋深范围: ${minDepth.toFixed(2)}m - ${maxDepth.toFixed(2)}m`);
+  console.log(`钻孔数量: ${boreholes.length}个`);
+  console.log('========================');
+  
+  return model;
+}
+
+/**
+ * 获取方位角的方向名称
+ * @param {number} azimuth - 方位角（度，0-360）
+ * @returns {string} 方向名称
+ */
+function getDirectionName(azimuth) {
+  if (azimuth >= 337.5 || azimuth < 22.5) return '北';
+  if (azimuth >= 22.5 && azimuth < 67.5) return '东北';
+  if (azimuth >= 67.5 && azimuth < 112.5) return '东';
+  if (azimuth >= 112.5 && azimuth < 157.5) return '东南';
+  if (azimuth >= 157.5 && azimuth < 202.5) return '南';
+  if (azimuth >= 202.5 && azimuth < 247.5) return '西南';
+  if (azimuth >= 247.5 && azimuth < 292.5) return '西';
+  return '西北';
 }
 
 /**
@@ -266,6 +366,34 @@ function pointInPolygon(point, polygon) {
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+/**
+ * 计算煤层平均厚度
+ */
+function calculateAverageThickness(boreholes) {
+  const validThickness = boreholes
+    .map(b => b.coalThickness)
+    .filter(t => t !== null && t !== undefined && t > 0);
+  
+  if (validThickness.length === 0) return 3; // 默认值
+  
+  const sum = validThickness.reduce((a, b) => a + b, 0);
+  return Math.round((sum / validThickness.length) * 100) / 100;
+}
+
+/**
+ * 计算煤层平均埋深
+ */
+function calculateAverageDepth(boreholes) {
+  const validDepth = boreholes
+    .map(b => b.depth || b.topElevation)
+    .filter(d => d !== null && d !== undefined && d > 0);
+  
+  if (validDepth.length === 0) return 400; // 默认值
+  
+  const sum = validDepth.reduce((a, b) => a + b, 0);
+  return Math.round((sum / validDepth.length) * 100) / 100;
 }
 
 /**

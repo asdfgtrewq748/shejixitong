@@ -78,13 +78,13 @@ const parseBoundaryCSV = (data) => {
 
 /**
  * 解析钻孔坐标 CSV
- * 期望格式: id,x,y 或 钻孔编号,x坐标,y坐标
+ * 期望格式: id,x,y 或 钻孔编号,x坐标,y坐标 或 钻孔名,坐标x,坐标y
  */
 const parseBoreholeCoordinatesCSV = (data) => {
   return data.map((row, index) => {
-    const id = row.id || row.ID || row['钻孔编号'] || row['钻孔ID'] || row['编号'] || `ZK-${index + 1}`;
-    const x = parseFloat(row.x || row.X || row['坐标X'] || row['x坐标'] || Object.values(row)[1]);
-    const y = parseFloat(row.y || row.Y || row['坐标Y'] || row['y坐标'] || Object.values(row)[2]);
+    const id = row.id || row.ID || row['钻孔编号'] || row['钻孔名'] || row['钻孔ID'] || row['编号'] || row['name'] || `ZK-${index + 1}`;
+    const x = parseFloat(row.x || row.X || row['坐标x'] || row['坐标X'] || row['x坐标'] || Object.values(row)[1]);
+    const y = parseFloat(row.y || row.Y || row['坐标y'] || row['坐标Y'] || row['y坐标'] || Object.values(row)[2]);
     
     if (isNaN(x) || isNaN(y)) {
       throw new Error(`钻孔 ${id} 坐标数据无效`);

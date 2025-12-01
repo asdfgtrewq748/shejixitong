@@ -398,17 +398,23 @@ const MiningDesignSystem = () => {
       setBoundary(data.boundary);
       addLog(`采区边界已导入 [顶点: ${data.boundary.length}]`, 'success');
     }
+    
     if (data.boreholes && data.boreholes.length > 0) {
-      // 重新计算评分
+      // 设置钻孔数据
+      setBoreholes(data.boreholes);
+      addLog(`钻孔数据已导入 [数量: ${data.boreholes.length}]`, 'success');
+      
+      // 生成地质模型
       try {
-        const result = await api.calculateScore(weights);
-        setBoreholes(result.boreholes || data.boreholes);
-        addLog(`钻孔数据已导入并评分 [数量: ${result.boreholes?.length || data.boreholes.length}]`, 'success');
-        setActiveTab('analysis');
+        addLog('正在生成地质模型...', 'loading');
+        await api.generateGeology(50);
+        addLog('地质模型生成成功', 'success');
       } catch (err) {
-        setBoreholes(data.boreholes);
-        addLog(`钻孔数据已导入 [数量: ${data.boreholes.length}]`, 'success');
+        addLog(`地质模型生成失败: ${err.message}`, 'warning');
       }
+      
+      // 切换到分析标签页
+      setActiveTab('analysis');
     }
   };
 
