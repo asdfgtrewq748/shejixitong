@@ -51,8 +51,17 @@ const parseCSV = (filePath) => {
   return new Promise((resolve, reject) => {
     const results = [];
     fs.createReadStream(filePath)
-      .pipe(csv())
-      .on('data', (data) => results.push(data))
+      .pipe(csv({
+        mapHeaders: ({ header }) => header.replace(/^\uFEFF/, '').trim() // 移除 BOM 和首尾空格
+      }))
+      .on('data', (data) => {
+        // 清理每个键的空格
+        const cleanData = {};
+        for (const [key, value] of Object.entries(data)) {
+          cleanData[key.trim()] = value?.trim?.() || value;
+        }
+        results.push(cleanData);
+      })
       .on('end', () => resolve(results))
       .on('error', (err) => reject(err));
   });
@@ -81,16 +90,25 @@ const parseBoundaryCSV = (data) => {
  * 期望格式: id,x,y 或 钻孔编号,x坐标,y坐标 或 钻孔名,坐标x,坐标y
  */
 const parseBoreholeCoordinatesCSV = (data) => {
+  if (data.length > 0) {
+    console.log('[parseBoreholeCoordinatesCSV] 第一行数据键:', Object.keys(data[0]));
+    console.log('[parseBoreholeCoordinatesCSV] 第一行数据值:', Object.values(data[0]));
+  }
+  
   return data.map((row, index) => {
-    const id = row.id || row.ID || row['钻孔编号'] || row['钻孔名'] || row['钻孔ID'] || row['编号'] || row['name'] || `ZK-${index + 1}`;
-    const x = parseFloat(row.x || row.X || row['坐标x'] || row['坐标X'] || row['x坐标'] || Object.values(row)[1]);
-    const y = parseFloat(row.y || row.Y || row['坐标y'] || row['坐标Y'] || row['y坐标'] || Object.values(row)[2]);
+    // 支持多种列名格式
+    const id = row['钻孔名'] || row['钻孔编号'] || row['钻孔ID'] || row['编号'] || 
+               row.id || row.ID || row.name || row.Name || `ZK-${index + 1}`;
+    const x = parseFloat(row['坐标x'] || row['坐标X'] || row['x坐标'] || row['X坐标'] ||
+                         row.x || row.X || Object.values(row)[1]);
+    const y = parseFloat(row['坐标y'] || row['坐标Y'] || row['y坐标'] || row['Y坐标'] ||
+                         row.y || row.Y || Object.values(row)[2]);
     
     if (isNaN(x) || isNaN(y)) {
       throw new Error(`钻孔 ${id} 坐标数据无效`);
     }
     
-    return { id: String(id), x, y };
+    return { id: String(id).trim(), x, y };
   });
 };
 

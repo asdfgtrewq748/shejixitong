@@ -108,14 +108,30 @@ function tryLoadInput() {
 
     if (!fs.existsSync(inputDir)) return
 
-    // 1) 读取坐标文件 (优先 zuobiao.csv / zuobiao .csv 忽略大小写)
-    const coordCandidates = ['zuobiao.csv', 'zuobiao.csv'.toLowerCase(), 'zuobiao.csv'.toUpperCase(), 'coordinates.csv', '坐标.csv']
+    // 1) 读取坐标文件 - 优先选择"钻孔"相关文件，排除"采区"边界文件
     let coordFile = null
-    for (const f of fs.readdirSync(inputDir)) {
-      const low = f.toLowerCase()
-      if (low.includes('zuobiao') || low.includes('坐标') || low.includes('coordinate')) {
+    const inputFiles = fs.readdirSync(inputDir)
+    
+    // 第一优先级：文件名包含"钻孔"和"坐标"
+    for (const f of inputFiles) {
+      if (f.endsWith('.csv') && f.includes('钻孔') && f.includes('坐标')) {
         coordFile = path.join(inputDir, f)
+        console.log(`[store] 找到坐标文件: ${f}`)
         break
+      }
+    }
+    
+    // 第二优先级：文件名包含"坐标"但不包含"采区"或"边界"
+    if (!coordFile) {
+      for (const f of inputFiles) {
+        const low = f.toLowerCase()
+        if (low.endsWith('.csv') && 
+            (low.includes('坐标') || low.includes('zuobiao') || low.includes('coordinate')) &&
+            !low.includes('采区') && !low.includes('边界') && !low.includes('boundary')) {
+          coordFile = path.join(inputDir, f)
+          console.log(`[store] 找到坐标文件: ${f}`)
+          break
+        }
       }
     }
 
@@ -129,68 +145,138 @@ function tryLoadInput() {
         const x = parseFloat(r.x || r.X || r['坐标X'] || r['坐标x'] || r['x'])
         const y = parseFloat(r.y || r.Y || r['坐标Y'] || r['坐标y'] || r['y'])
         if (!Number.isNaN(x) && !Number.isNaN(y)) {
-          coords.push({ id: id ? String(id) : `BH_${coords.length + 1}`, x, y })
+          coords.push({ id: id ? String(id).trim() : `BH_${coords.length + 1}`, x, y })
         }
       })
+      console.log(`[store] 解析到 ${coords.length} 个钻孔坐标`)
     }
 
-    // 2) 读取测试钻孔目录（如存在），把每个 BK-*.csv 聚合为属性对象
-    const boreholeDataDir = path.join(inputDir, '测试钻孔')
+    // 2) 读取钻孔数据目录 - 按优先级排序
+    const possibleDataDirs = ['各个钻孔-补充', '钻孔数据', '测试钻孔', 'boreholes']
+    let boreholeDataDir = null
+    for (const dirName of possibleDataDirs) {
+      const testPath = path.join(inputDir, dirName)
+      if (fs.existsSync(testPath) && fs.statSync(testPath).isDirectory()) {
+        boreholeDataDir = testPath
+        console.log(`[store] 找到钻孔数据目录: ${dirName}`)
+        break
+      }
+    }
+
     const bkMap = new Map()
-    if (fs.existsSync(boreholeDataDir) && fs.statSync(boreholeDataDir).isDirectory()) {
+    if (boreholeDataDir) {
       const files = fs.readdirSync(boreholeDataDir).filter(f => f.toLowerCase().endsWith('.csv'))
+      console.log(`[store] 发现 ${files.length} 个钻孔数据文件`)
+      
       for (const f of files) {
         try {
           const content = fs.readFileSync(path.join(boreholeDataDir, f), 'utf8')
           const rows = parseCSV(content)
           if (rows.length === 0) continue
 
-          // 计算数值列的平均值作为简要属性
-          const numericSums = {}
-          const numericCounts = {}
-          for (const row of rows) {
-            Object.entries(row).forEach(([k, v]) => {
-              const n = parseFloat(v)
-              if (!Number.isNaN(n)) {
-                numericSums[k] = (numericSums[k] || 0) + n
-                numericCounts[k] = (numericCounts[k] || 0) + 1
+          // 检测数据格式 - 是否是地层数据（包含"名称"和"厚度"列）
+          const firstRow = rows[0]
+          const keys = Object.keys(firstRow)
+          const isStratumData = keys.some(k => k.includes('名称')) && keys.some(k => k.includes('厚度'))
+          
+          let agg = {}
+          
+          if (isStratumData) {
+            // 地层数据格式：提取煤层厚度和岩层信息
+            let totalCoalThickness = 0
+            let totalDepth = 0
+            let coalLayers = []
+            let rockLayers = []
+            
+            for (const row of rows) {
+              const name = row['名称'] || row['岩性'] || ''
+              const thickness = parseFloat(row['厚度/m'] || row['厚度'] || row['厚度(m)'] || 0)
+              
+              if (!isNaN(thickness) && thickness > 0) {
+                totalDepth += thickness
+                
+                // 判断是否是煤层
+                if (name.includes('煤')) {
+                  totalCoalThickness += thickness
+                  coalLayers.push({ name, thickness })
+                } else {
+                  rockLayers.push({ name, thickness })
+                }
               }
+            }
+            
+            // 计算平均岩石硬度（根据岩性估算普氏系数）
+            let totalHardness = 0
+            let hardnessCount = 0
+            for (const layer of rockLayers) {
+              let hardness = 5 // 默认
+              if (layer.name.includes('砾岩') || layer.name.includes('砂岩')) hardness = 7
+              else if (layer.name.includes('泥岩')) hardness = 4
+              else if (layer.name.includes('炭质')) hardness = 3
+              else if (layer.name.includes('粉砂')) hardness = 5
+              totalHardness += hardness * layer.thickness
+              hardnessCount += layer.thickness
+            }
+            
+            agg = {
+              '煤层厚度': Math.round(totalCoalThickness * 100) / 100,
+              '埋深': Math.round(totalDepth * 100) / 100,
+              '岩石硬度': hardnessCount > 0 ? Math.round((totalHardness / hardnessCount) * 10) / 10 : 5,
+              '瓦斯含量': 5 + Math.random() * 5, // 默认值，可后续补充真实数据
+              '地下水位': 20 + Math.random() * 30,
+              'coalLayers': coalLayers.length,
+              'rockLayers': rockLayers.length
+            }
+          } else {
+            // 普通数据格式：计算数值列的平均值
+            const numericSums = {}
+            const numericCounts = {}
+            for (const row of rows) {
+              Object.entries(row).forEach(([k, v]) => {
+                const n = parseFloat(v)
+                if (!Number.isNaN(n)) {
+                  numericSums[k] = (numericSums[k] || 0) + n
+                  numericCounts[k] = (numericCounts[k] || 0) + 1
+                }
+              })
+            }
+            Object.keys(numericSums).forEach(k => {
+              agg[k] = Math.round((numericSums[k] / numericCounts[k]) * 100) / 100
             })
           }
-          const agg = {}
-          Object.keys(numericSums).forEach(k => {
-            agg[k] = Math.round((numericSums[k] / numericCounts[k]) * 10) / 10
-          })
 
-          // 尝试从文件中提取id列，若没有则用文件名
-          let bid = null
-          if (rows[0].id) bid = rows[0].id
-          if (!bid) {
-            const nameOnly = path.parse(f).name
-            bid = nameOnly
-          }
-          bkMap.set(String(bid), agg)
+          // 用文件名作为钻孔ID（去掉.csv后缀）
+          const bid = path.parse(f).name.trim()
+          bkMap.set(bid, agg)
         } catch (e) {
-          // 忽略单个文件解析错误
+          console.warn(`[store] 解析文件失败: ${f}`, e.message)
           continue
         }
       }
+      console.log(`[store] 成功解析 ${bkMap.size} 个钻孔数据`)
     }
 
-    // 3) 合并坐标与钻孔数据，若没有坐标则尝试用BK文件名生成条目
+    // 3) 合并坐标与钻孔数据
     const merged = []
+    let matchedCount = 0
+    
     if (coords.length > 0) {
       coords.forEach(c => {
-        // 尝试匹配 bkMap
+        // 精确匹配钻孔ID
         let data = bkMap.get(c.id) || null
-        // 还尝试无前缀匹配（如 BK-1 匹配 1）
+        
+        // 如果精确匹配失败，尝试去除空格后匹配
         if (!data) {
+          const cleanId = c.id.replace(/\s+/g, '')
           for (const [k, v] of bkMap.entries()) {
-            if (String(k).includes(String(c.id)) || String(c.id).includes(String(k))) {
-              data = v; break
+            if (k.replace(/\s+/g, '') === cleanId) {
+              data = v
+              break
             }
           }
         }
+        
+        if (data) matchedCount++
         
         // 构建钻孔对象，添加派生字段
         const borehole = { 
@@ -203,12 +289,12 @@ function tryLoadInput() {
         
         // 从data中提取标准字段（兼容多种命名）
         if (data) {
-          borehole.depth = parseFloat(data['埋深'] || data['depth'] || data['Depth'] || 0);
-          borehole.coalThickness = parseFloat(data['煤层厚度'] || data['厚度'] || data['coalThickness'] || 0);
+          borehole.depth = parseFloat(data['埋深'] || data['depth'] || data['Depth'] || 100);
+          borehole.coalThickness = parseFloat(data['煤层厚度'] || data['厚度'] || data['coalThickness'] || data['煤厚'] || 3);
           borehole.rockHardness = parseFloat(data['岩石硬度'] || data['普氏系数'] || data['rockHardness'] || 5);
-          borehole.gasContent = parseFloat(data['瓦斯含量'] || data['瓦斯'] || data['gasContent'] || 0);
-          borehole.groundWater = parseFloat(data['地下水位'] || data['水位'] || data['groundWater'] || 0);
-          borehole.calorificValue = parseFloat(data['发热量'] || data['热值'] || data['calorificValue'] || null);
+          borehole.gasContent = parseFloat(data['瓦斯含量'] || data['瓦斯'] || data['gasContent'] || 5);
+          borehole.groundWater = parseFloat(data['地下水位'] || data['水位'] || data['groundWater'] || 20);
+          borehole.calorificValue = parseFloat(data['发热量'] || data['热值'] || data['calorificValue'] || 25);
           
           // 地质模型相关字段
           borehole.topElevation = parseFloat(data['煤层顶板标高'] || data['顶板标高'] || data['topElevation'] || data['coalTopElevation'] || null);
@@ -232,14 +318,37 @@ function tryLoadInput() {
           borehole.ecoLandType = data['土地类型'] || data['ecoLandType'] || 'wasteland';
           borehole.distanceToWaterBody = parseFloat(data['距水体距离'] || data['distanceToWaterBody'] || 1000);
           borehole.distanceToProtectedArea = parseFloat(data['距保护区距离'] || data['distanceToProtectedArea'] || 2000);
+        } else {
+          // 没有数据时使用默认值
+          borehole.depth = 100;
+          borehole.coalThickness = 3;
+          borehole.rockHardness = 5;
+          borehole.gasContent = 5;
+          borehole.groundWater = 20;
+          borehole.calorificValue = 25;
         }
         
         merged.push(borehole);
       })
-    } else {
-      // 没有坐标，尝试仅从 BK 文件生成条目
+      
+      console.log(`[store] 合并完成: ${merged.length} 个钻孔, ${matchedCount} 个匹配到数据`)
+    } else if (bkMap.size > 0) {
+      // 没有坐标文件，仅从数据文件生成条目
+      console.log(`[store] 未找到坐标文件，使用数据文件创建钻孔`)
       for (const [k, v] of bkMap.entries()) {
-        merged.push({ id: k, x: 0, y: 0, data: v, scores: { safety: 0, economic: 0, env: 0 } })
+        merged.push({ 
+          id: k, 
+          x: 0, 
+          y: 0, 
+          data: v, 
+          scores: { safety: 0, economic: 0, env: 0 },
+          depth: 100,
+          coalThickness: 3,
+          rockHardness: 5,
+          gasContent: 5,
+          groundWater: 20,
+          calorificValue: 25
+        })
       }
     }
 
@@ -247,8 +356,36 @@ function tryLoadInput() {
     store.boreholeData = Array.from(bkMap.entries()).map(([k, v]) => ({ id: k, data: v }))
     store.boreholes = merged
 
-    // 4) 基于坐标计算近似矩形边界（外扩 5% margin）
-    if (merged.length > 0) {
+    // 4) 尝试读取采区边界文件
+    let boundaryFile = null
+    for (const f of inputFiles) {
+      if (f.endsWith('.csv') && (f.includes('采区') || f.includes('边界') || f.includes('boundary'))) {
+        // 排除钻孔坐标文件
+        if (!f.includes('钻孔')) {
+          boundaryFile = path.join(inputDir, f)
+          console.log(`[store] 找到边界文件: ${f}`)
+          break
+        }
+      }
+    }
+    
+    if (boundaryFile && fs.existsSync(boundaryFile)) {
+      const txt = fs.readFileSync(boundaryFile, 'utf8')
+      const rows = parseCSV(txt)
+      const boundary = []
+      rows.forEach(r => {
+        const x = parseFloat(r.x || r.X || r['坐标X'] || r['坐标x'])
+        const y = parseFloat(r.y || r.Y || r['坐标Y'] || r['坐标y'])
+        if (!Number.isNaN(x) && !Number.isNaN(y)) {
+          boundary.push({ x, y })
+        }
+      })
+      if (boundary.length >= 3) {
+        store.boundary = boundary
+        console.log(`[store] 加载采区边界: ${boundary.length} 个顶点`)
+      }
+    } else if (merged.length > 0) {
+      // 5) 如果没有边界文件，基于钻孔坐标生成近似边界（外扩 15% margin）
       const xs = merged.map(b => b.x)
       const ys = merged.map(b => b.y)
       const minX = Math.min(...xs)
@@ -265,10 +402,13 @@ function tryLoadInput() {
         { x: Math.round(minX - margin), y: Math.round(maxY + margin) }
       ]
       store.boundary = boundary
-      
-      // 5) 计算每个钻孔到边界的距离（用于经济评分）
+      console.log(`[store] 自动生成边界: ${boundary.length} 个顶点`)
+    }
+    
+    // 6) 计算每个钻孔到边界的距离（用于经济评分）
+    if (store.boundary && store.boundary.length >= 3 && merged.length > 0) {
       merged.forEach(bh => {
-        bh.distanceToBoundary = calculateDistanceToBoundary(bh, boundary);
+        bh.distanceToBoundary = calculateDistanceToBoundary(bh, store.boundary);
       });
     }
 
@@ -278,7 +418,8 @@ function tryLoadInput() {
   }
 }
 
-// 尝试在模块加载时读取内置 input 数据
-tryLoadInput()
+// 禁用内置数据加载 - 完全依赖用户上传
+// tryLoadInput()
+console.log('[store] 内置数据加载已禁用，请通过前端上传数据')
 
 export default store;

@@ -238,9 +238,11 @@ router.post('/merge-with-coordinates', (req, res) => {
       return res.status(400).json({ error: '请先上传钻孔坐标' });
     }
     
-    // 打印前3个钻孔编号对比
-    console.log('分层数据钻孔编号示例:', store.boreholeLayerData.slice(0, 3).map(d => d.钻孔编号));
-    console.log('坐标数据钻孔编号示例:', store.boreholeCoordinates.slice(0, 3).map(c => c.id));
+    // 打印所有钻孔编号对比
+    const layerIds = store.boreholeLayerData.map(d => d.钻孔编号);
+    const coordIds = store.boreholeCoordinates.map(c => c.id);
+    console.log('分层数据钻孔编号:', layerIds);
+    console.log('坐标数据钻孔编号:', coordIds);
     
     const coordMap = new Map(store.boreholeCoordinates.map(c => [c.id, { x: c.x, y: c.y }]));
     const merged = [];
@@ -267,12 +269,50 @@ router.post('/merge-with-coordinates', (req, res) => {
       }
     });
     
+    // 详细的匹配分析
+    if (merged.length === 0 && unmatched.length > 0) {
+      // 所有钻孔都未匹配，可能是文件不匹配
+      const layerSample = layerIds.slice(0, 3).join(', ');
+      const coordSample = coordIds.slice(0, 3).join(', ');
+      console.error(`❌ 钻孔编号完全不匹配！`);
+      console.error(`   分层数据编号示例: ${layerSample}`);
+      console.error(`   坐标数据编号示例: ${coordSample}`);
+      return res.status(400).json({ 
+        error: `钻孔编号不匹配：分层数据使用 [${layerSample}...], 坐标数据使用 [${coordSample}...]。请确保上传的坐标文件与分层数据文件的钻孔编号一致。`,
+        details: {
+          layerSample: layerIds.slice(0, 5),
+          coordSample: coordIds.slice(0, 5)
+        }
+      });
+    }
+    
     if (unmatched.length > 0) {
-      console.warn(`⚠️  无坐标: ${unmatched.join(', ')}`);
+      console.warn(`⚠️  ${unmatched.length}个钻孔无坐标: ${unmatched.join(', ')}`);
     }
     
     store.boreholes = merged;
     console.log(`✅ 合并完成: ${merged.length}个钻孔`);
+    
+    // 如果没有边界数据，基于钻孔坐标自动生成边界
+    if ((!store.boundary || store.boundary.length < 3) && merged.length > 0) {
+      const xs = merged.map(b => b.x);
+      const ys = merged.map(b => b.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const w = maxX - minX || 1;
+      const h = maxY - minY || 1;
+      const margin = Math.max(w, h) * 0.15; // 外扩15%
+      
+      store.boundary = [
+        { x: Math.round(minX - margin), y: Math.round(minY - margin) },
+        { x: Math.round(maxX + margin), y: Math.round(minY - margin) },
+        { x: Math.round(maxX + margin), y: Math.round(maxY + margin) },
+        { x: Math.round(minX - margin), y: Math.round(maxY + margin) }
+      ];
+      console.log(`📐 自动生成采区边界: ${store.boundary.length} 个顶点`);
+    }
     
     res.json({
       success: true,

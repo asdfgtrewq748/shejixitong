@@ -98,6 +98,7 @@ const MiningDesignSystem = () => {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [viewInitialized, setViewInitialized] = useState(false);
   
   // 编辑模式状态
   const [isEditing, setIsEditing] = useState(false);
@@ -121,6 +122,44 @@ const MiningDesignSystem = () => {
     setSystemLog(prev => [`[${time}] ${msg}|${type}`, ...prev].slice(0, 50));
   };
 
+  // 自动适配视图 - 当边界数据加载后调整视窗
+  useEffect(() => {
+    if (boundary.length > 0 && !viewInitialized && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const canvasWidth = canvas.width || 900;
+      const canvasHeight = canvas.height || 700;
+      
+      // 计算边界的范围
+      const xs = boundary.map(p => p.x);
+      const ys = boundary.map(p => p.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const dataWidth = maxX - minX;
+      const dataHeight = maxY - minY;
+      
+      // 计算缩放比例（留出 10% 边距）
+      const scaleX = (canvasWidth * 0.8) / dataWidth;
+      const scaleY = (canvasHeight * 0.8) / dataHeight;
+      const newScale = Math.min(scaleX, scaleY, 1); // 不超过1倍
+      
+      // 计算平移偏移使数据居中
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const offsetX = (canvasWidth / 2 / newScale) - centerX;
+      const offsetY = (canvasHeight / 2 / newScale) - centerY;
+      
+      setScale(newScale);
+      setPanOffset({ x: offsetX, y: offsetY });
+      setViewInitialized(true);
+      
+      console.log(`视图自动适配: scale=${newScale.toFixed(4)}, offset=(${offsetX.toFixed(0)}, ${offsetY.toFixed(0)})`);
+      console.log(`数据范围: X[${minX.toFixed(0)}-${maxX.toFixed(0)}], Y[${minY.toFixed(0)}-${maxY.toFixed(0)}]`);
+      addLog(`视图已自动适配至采区范围`, 'success');
+    }
+  }, [boundary, viewInitialized]);
+
   // 自动加载内置数据
   useEffect(() => {
     const fetchBuiltInData = async () => {
@@ -134,28 +173,32 @@ const MiningDesignSystem = () => {
         const [boreholesRes, boundaryRes] = await Promise.all([
           api.getBoreholes().catch(e => {
             console.warn("Fetch boreholes failed", e);
-            return [];
+            return { boreholes: [] };
           }),
           api.getBoundary().catch(e => {
             console.warn("Fetch boundary failed", e);
-            return [];
+            return { boundary: [] };
           })
         ]);
 
         let hasData = false;
+        
+        // 提取数据 - API 返回 { boundary: [...] } 和 { boreholes: [...] }
+        const boundaryData = boundaryRes?.boundary || (Array.isArray(boundaryRes) ? boundaryRes : []);
+        const boreholesData = boreholesRes?.boreholes || (Array.isArray(boreholesRes) ? boreholesRes : []);
 
-        if (boundaryRes && Array.isArray(boundaryRes) && boundaryRes.length > 0) {
-          setBoundary(boundaryRes);
-          addLog(`已加载内置采区边界 [顶点: ${boundaryRes.length}]`, 'success');
+        if (boundaryData.length > 0) {
+          setBoundary(boundaryData);
+          addLog(`已加载采区边界 [顶点: ${boundaryData.length}]`, 'success');
           hasData = true;
         }
 
-        if (boreholesRes && Array.isArray(boreholesRes) && boreholesRes.length > 0) {
-          addLog(`检测到 ${boreholesRes.length} 个内置钻孔，正在计算评分...`, 'loading');
+        if (boreholesData.length > 0) {
+          addLog(`检测到 ${boreholesData.length} 个钻孔，正在计算评分...`, 'loading');
           try {
             // 调用后端计算评分（包含热力图数据）
             const result = await api.calculateScore(weights, 50);
-            setBoreholes(result.boreholes || boreholesRes);
+            setBoreholes(result.boreholes || boreholesData);
             
             // 设置热力图数据
             if (result.grids && result.contours) {
@@ -167,11 +210,11 @@ const MiningDesignSystem = () => {
               addLog(`评分网格生成完成 (${Object.keys(result.grids || {}).length}个维度)`, 'success');
             }
             
-            addLog(`内置钻孔数据加载完毕 [数量: ${result.boreholes?.length || boreholesRes.length}]`, 'success');
+            addLog(`钻孔数据加载完毕 [数量: ${result.boreholes?.length || boreholesData.length}]`, 'success');
           } catch (err) {
             console.error("Score calculation failed", err);
-            setBoreholes(boreholesRes);
-            addLog(`内置钻孔数据已加载 (评分服务暂不可用)`, 'warning');
+            setBoreholes(boreholesData);
+            addLog(`钻孔数据已加载 (评分服务暂不可用)`, 'warning');
           }
           hasData = true;
         }
@@ -180,7 +223,7 @@ const MiningDesignSystem = () => {
           setActiveTab('analysis');
           addLog('系统初始化完成，已自动切换至分析模式', 'success');
         } else {
-          addLog('未检测到内置数据，等待手动导入...', 'info');
+          addLog('未检测到数据，等待手动导入...', 'info');
         }
 
       } catch (err) {
