@@ -14,7 +14,7 @@ export async function uploadBoundaryCSV(file) {
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || '上传失败');
+    throw new Error(error.detail || error.error || '上传失败');
   }
   const result = await res.json();
   return result.data || result;
@@ -32,7 +32,7 @@ export async function uploadBoreholeCoordinatesCSV(file) {
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || '上传失败');
+    throw new Error(error.detail || error.error || '上传失败');
   }
   const result = await res.json();
   return result.data || result;
@@ -50,7 +50,7 @@ export async function uploadBoreholeDataCSV(file) {
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || '上传失败');
+    throw new Error(error.detail || error.error || '上传失败');
   }
   const result = await res.json();
   return result.data || result;
@@ -104,7 +104,7 @@ export async function uploadBoreholeLayers(files, targetCoalSeam = null) {
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || '上传失败');
+    throw new Error(error.detail || error.error || '上传失败');
   }
   return res.json();
 }
@@ -118,7 +118,7 @@ export async function mergeBoreholeData() {
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || '合并失败');
+    throw new Error(error.detail || error.error || '合并失败');
   }
   return res.json();
 }

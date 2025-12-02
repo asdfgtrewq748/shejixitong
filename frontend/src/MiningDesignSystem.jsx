@@ -115,7 +115,9 @@ const MiningDesignSystem = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBorehole, setSelectedBorehole] = useState(null);
+  const [selectedWorkface, setSelectedWorkface] = useState(null);
   const [importMode, setImportMode] = useState('file'); // 'file' | 'demo'
+  const [designParams, setDesignParams] = useState({ faceWidth: 150, pillarWidth: 20 });
 
   const addLog = (msg, type = 'info') => {
     const time = new Date().toLocaleTimeString();
@@ -262,6 +264,34 @@ const MiningDesignSystem = () => {
     }
   };
 
+  const handleCanvasClick = (e) => {
+    if (isPanning || isEditing) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = Math.round((e.clientX - rect.left) * scaleX / scale - panOffset.x);
+    const y = Math.round((e.clientY - rect.top) * scaleY / scale - panOffset.y);
+    
+    // 检查是否点击了工作面
+    if (designData && designData.workfaces && activeTab === 'synthesis') {
+      const clickedFace = designData.workfaces.find(face => 
+        x >= face.x && x <= face.x + face.width &&
+        y >= face.y && y <= face.y + face.length
+      );
+      
+      if (clickedFace) {
+        setSelectedWorkface(clickedFace);
+        addLog(`选中工作面: ${clickedFace.id}`, 'info');
+        return;
+      }
+    }
+    
+    setSelectedWorkface(null);
+  };
+
   const handleCanvasMouseDown = (e) => {
     if (!isEditing) {
       // 非编辑模式：平移功能
@@ -345,9 +375,41 @@ const MiningDesignSystem = () => {
   // 缩放控制
   const handleZoomIn = () => setScale(prev => Math.min(4, prev * 1.25));
   const handleZoomOut = () => setScale(prev => Math.max(0.25, prev * 0.8));
+  
   const handleResetView = () => {
-    setScale(1);
-    setPanOffset({ x: 0, y: 0 });
+    if (boundary.length > 0 && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const canvasWidth = canvas.width || 900;
+      const canvasHeight = canvas.height || 700;
+      
+      // 计算边界的范围
+      const xs = boundary.map(p => p.x);
+      const ys = boundary.map(p => p.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const dataWidth = maxX - minX;
+      const dataHeight = maxY - minY;
+      
+      // 计算缩放比例（留出 10% 边距）
+      const scaleX = (canvasWidth * 0.8) / dataWidth;
+      const scaleY = (canvasHeight * 0.8) / dataHeight;
+      const newScale = Math.min(scaleX, scaleY); // 允许放大以适应屏幕
+      
+      // 计算平移偏移使数据居中
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const offsetX = (canvasWidth / 2 / newScale) - centerX;
+      const offsetY = (canvasHeight / 2 / newScale) - centerY;
+      
+      setScale(newScale);
+      setPanOffset({ x: offsetX, y: offsetY });
+      addLog('视图已重置至最佳显示范围', 'info');
+    } else {
+      setScale(1);
+      setPanOffset({ x: 0, y: 0 });
+    }
   };
 
   // 编辑模式控制
@@ -516,18 +578,20 @@ const MiningDesignSystem = () => {
       // 2. 调用后端生成设计方案（传入用户编辑内容）
       addLog('运行遗传算法优化巷道路径...', 'info');
       
-      const designParams = {
+      const params = {
         mode: displayDimension,
+        faceWidth: designParams.faceWidth,
+        pillarWidth: designParams.pillarWidth,
         userEdits: userEdits.roadways.length > 0 || userEdits.workfaces.length > 0 
           ? userEdits 
           : undefined
       };
       
-      if (designParams.userEdits) {
+      if (params.userEdits) {
         addLog(`包含用户自定义: ${userEdits.roadways.length}条巷道, ${userEdits.workfaces.length}个工作面`, 'info');
       }
       
-      const design = await api.generateDesign(designParams);
+      const design = await api.generateDesign(params);
       setDesignData(design);
       
       const faceCount = design.workfaces?.length || 0;
@@ -697,128 +761,172 @@ const MiningDesignSystem = () => {
     if (showDesign && designData && activeTab === 'synthesis') {
       ctx.globalCompositeOperation = 'source-over'
       
-      // 绘制主巷道
-      if (designData.mainRoadway && designData.mainRoadway.path && designData.mainRoadway.path.length > 1) {
-        const mainRoad = designData.mainRoadway.path
-        
-        // 巷道背景（宽度）
-        ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)'
-        ctx.lineWidth = 12
-        ctx.lineCap = 'round'
-        ctx.lineJoin = 'round'
-        ctx.beginPath()
-        ctx.moveTo(mainRoad[0].x, mainRoad[0].y)
-        mainRoad.forEach(p => ctx.lineTo(p.x, p.y))
-        ctx.stroke()
-        
-        // 巷道中线 - 动态流动效果
-        ctx.strokeStyle = '#00ffff'
-        ctx.lineWidth = 3
-        ctx.setLineDash([20, 15])
-        ctx.lineDashOffset = -time * 2
-        ctx.shadowBlur = 10
-        ctx.shadowColor = '#00ffff'
-        ctx.beginPath()
-        ctx.moveTo(mainRoad[0].x, mainRoad[0].y)
-        mainRoad.forEach(p => ctx.lineTo(p.x, p.y))
-        ctx.stroke()
-        ctx.setLineDash([])
-        ctx.shadowBlur = 0
-        
-        // 主巷道标签
-        const midIdx = Math.floor(mainRoad.length / 2)
-        ctx.fillStyle = '#00ffff'
-        ctx.font = `bold ${Math.max(10, 12 / scale)}px sans-serif`
-        ctx.textAlign = 'center'
-        ctx.fillText('主巷道', mainRoad[midIdx].x, mainRoad[midIdx].y - 15)
+      // 绘制所有巷道 (兼容新旧数据结构)
+      const roadways = designData.roadways || [];
+      // 如果没有 roadways 数组，尝试兼容旧结构
+      if (roadways.length === 0) {
+        if (designData.mainRoadway) roadways.push(designData.mainRoadway);
+        if (designData.branchRoadways) roadways.push(...designData.branchRoadways);
       }
-      
-      // 绘制分巷道（区分运输巷道和回风巷道）
-      if (designData.branchRoadways && designData.branchRoadways.length > 0) {
-        designData.branchRoadways.forEach(branch => {
-          if (branch.path && branch.path.length > 1) {
-            // 根据巷道类型选择颜色
-            const isTransport = branch.roadwayType === 'transport' || branch.id?.startsWith('BR-T');
-            const isVentilation = branch.roadwayType === 'ventilation' || branch.id?.startsWith('BR-V');
-            
-            const branchColor = isTransport ? '#10b981' : (isVentilation ? '#f59e0b' : '#a855f7');
-            const branchBgColor = isTransport ? 'rgba(16, 185, 129, 0.3)' : (isVentilation ? 'rgba(245, 158, 11, 0.3)' : 'rgba(168, 85, 247, 0.3)');
-            
-            // 分巷背景
-            ctx.strokeStyle = branchBgColor;
-            ctx.lineWidth = 8;
-            ctx.lineCap = 'round';
-            ctx.beginPath();
-            ctx.moveTo(branch.path[0].x, branch.path[0].y);
-            branch.path.forEach(p => ctx.lineTo(p.x, p.y));
-            ctx.stroke();
-            
-            // 分巷中线 - 不同类型使用不同虚线样式
-            ctx.strokeStyle = branchColor;
-            ctx.lineWidth = 2;
-            if (isTransport) {
-              ctx.setLineDash([15, 5]); // 运输巷道：长虚线
-            } else if (isVentilation) {
-              ctx.setLineDash([5, 5]); // 回风巷道：短虚线
-            } else {
-              ctx.setLineDash([10, 8]); // 其他：中等虚线
-            }
-            ctx.lineDashOffset = -time * 1.5;
-            ctx.beginPath();
-            ctx.moveTo(branch.path[0].x, branch.path[0].y);
-            branch.path.forEach(p => ctx.lineTo(p.x, p.y));
-            ctx.stroke();
-            ctx.setLineDash([]);
-            
-            // 巷道标签（可选，避免太拥挤）
-            if (scale > 0.5) {
-              const midIdx = Math.floor(branch.path.length / 2);
-              const midPoint = branch.path[midIdx];
-              ctx.fillStyle = branchColor;
-              ctx.font = `${Math.max(8, 10 / scale)}px sans-serif`;
-              ctx.textAlign = 'center';
-              const label = isTransport ? '运输' : (isVentilation ? '回风' : '分巷');
-              ctx.fillText(label, midPoint.x, midPoint.y - 5);
-            }
+
+      roadways.forEach(road => {
+        if (road.path && road.path.length > 1) {
+          const isMain = road.type === 'main' || road.id?.startsWith('MR');
+          const isTransport = road.type === 'transport' || road.id?.startsWith('BR-T');
+          const isVentilation = road.type === 'ventilation' || road.id?.startsWith('BR-V');
+          
+          // 颜色定义
+          let color = '#a855f7'; // 默认紫色
+          let bgColor = 'rgba(168, 85, 247, 0.3)';
+          let lineWidth = 8;
+          
+          if (isMain) {
+            color = '#00ffff'; // 青色
+            bgColor = 'rgba(0, 255, 255, 0.3)';
+            lineWidth = 12;
+          } else if (isTransport) {
+            color = '#10b981'; // 绿色
+            bgColor = 'rgba(16, 185, 129, 0.3)';
+          } else if (isVentilation) {
+            color = '#f59e0b'; // 橙色
+            bgColor = 'rgba(245, 158, 11, 0.3)';
           }
-        });
-      }
+
+          // 巷道背景
+          ctx.strokeStyle = bgColor;
+          ctx.lineWidth = lineWidth;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          ctx.moveTo(road.path[0].x, road.path[0].y);
+          road.path.forEach(p => ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+          
+          // 巷道中线 - 动态效果
+          ctx.strokeStyle = color;
+          ctx.lineWidth = isMain ? 3 : 2;
+          
+          if (isMain) {
+            ctx.setLineDash([20, 15]);
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = color;
+          } else if (isTransport) {
+            ctx.setLineDash([15, 5]);
+            ctx.shadowBlur = 0;
+          } else {
+            ctx.setLineDash([5, 5]);
+            ctx.shadowBlur = 0;
+          }
+          
+          ctx.lineDashOffset = -time * (isMain ? 2 : 1.5);
+          
+          ctx.beginPath();
+          ctx.moveTo(road.path[0].x, road.path[0].y);
+          road.path.forEach(p => ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.shadowBlur = 0;
+          
+          // 标签
+          if (scale > 0.5 || isMain) {
+            const midIdx = Math.floor(road.path.length / 2);
+            const midPoint = road.path[midIdx];
+            ctx.fillStyle = color;
+            ctx.font = `${isMain ? 'bold' : ''} ${Math.max(8, (isMain ? 12 : 10) / scale)}px sans-serif`;
+            ctx.textAlign = 'center';
+            const label = isMain ? '主巷道' : (isTransport ? '运输' : (isVentilation ? '回风' : '分巷'));
+            ctx.fillText(label, midPoint.x, midPoint.y - (isMain ? 15 : 5));
+          }
+        }
+      });
+      
+
       
       // 绘制工作面
       if (designData.workfaces && designData.workfaces.length > 0) {
         designData.workfaces.forEach((face, idx) => {
           const { x, y, width: w, length: h, avgScore } = face
           const score = avgScore || 0
+          const isSelected = selectedWorkface && selectedWorkface.id === face.id;
           
           // 工作面背景
-          ctx.fillStyle = scoreToColor(score, 0.3)
-          ctx.fillRect(x, y, w, h)
+          ctx.fillStyle = isSelected ? 'rgba(255, 255, 255, 0.2)' : scoreToColor(score, 0.3)
           
-          // 工作面边框 - 发光效果
-          ctx.shadowBlur = 8
-          ctx.shadowColor = score > 70 ? '#10b981' : '#f59e0b'
-          ctx.strokeStyle = score > 70 ? '#10b981' : '#f59e0b'
-          ctx.lineWidth = 2
-          ctx.strokeRect(x, y, w, h)
-          ctx.shadowBlur = 0
-          
-          // 扫描线动画
-          const scanProgress = (time + idx * 20) % 100
-          const scanY = y + (h * scanProgress / 100)
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'
-          ctx.lineWidth = 1
-          ctx.beginPath()
-          ctx.moveTo(x, scanY)
-          ctx.lineTo(x + w, scanY)
-          ctx.stroke()
-          
-          // 工作面标签
-          ctx.fillStyle = '#fff'
-          ctx.font = `bold ${Math.max(10, 12 / scale)}px "Courier New"`
-          ctx.textAlign = 'center'
-          ctx.fillText(face.id || `WF_${String(idx + 1).padStart(2, '0')}`, x + w / 2, y + h / 2 - 5)
-          ctx.font = `${Math.max(8, 10 / scale)}px "Courier New"`
-          ctx.fillText(`${score.toFixed(0)}分`, x + w / 2, y + h / 2 + 10)
+          if (face.points && face.points.length > 0) {
+            // 使用多边形顶点绘制（支持旋转）
+            ctx.beginPath();
+            ctx.moveTo(face.points[0].x, face.points[0].y);
+            face.points.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.closePath();
+            ctx.fill();
+            
+            // 工作面边框
+            ctx.shadowBlur = isSelected ? 20 : 8
+            ctx.shadowColor = isSelected ? '#ffffff' : (score > 70 ? '#10b981' : '#f59e0b')
+            ctx.strokeStyle = isSelected ? '#ffffff' : (score > 70 ? '#10b981' : '#f59e0b')
+            ctx.lineWidth = isSelected ? 4 : 2
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            // 扫描线动画 (简化为中心线)
+            if (!isSelected) {
+               // 简单画一条对角线作为纹理
+               ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+               ctx.lineWidth = 1;
+               ctx.beginPath();
+               ctx.moveTo(face.points[0].x, face.points[0].y);
+               ctx.lineTo(face.points[2] ? face.points[2].x : face.points[1].x, face.points[2] ? face.points[2].y : face.points[1].y);
+               ctx.stroke();
+            }
+            
+            // 标签位置 (使用中心点)
+            const centerX = face.center_x || (x + w/2);
+            const centerY = face.center_y || (y + h/2);
+            
+            // 工作面标签
+            ctx.fillStyle = '#fff'
+            ctx.font = `bold ${Math.max(10, 12 / scale)}px "Courier New"`
+            ctx.textAlign = 'center'
+            ctx.fillText(face.id || `WF_${String(idx + 1).padStart(2, '0')}`, centerX, centerY)
+            
+            if (isSelected) {
+               ctx.font = `${Math.max(8, 10 / scale)}px sans-serif`
+               ctx.fillText(`${w.toFixed(1)}m x ${h.toFixed(1)}m`, centerX, centerY + 15/scale)
+               ctx.fillText(`${score.toFixed(0)}分`, centerX, centerY + 30/scale)
+            } else {
+               ctx.font = `${Math.max(8, 10 / scale)}px "Courier New"`
+               ctx.fillText(`${score.toFixed(0)}分`, centerX, centerY + 12/scale)
+            }
+            
+          } else {
+            // 降级回退：使用矩形绘制
+            ctx.fillRect(x, y, w, h)
+            
+            // 工作面边框
+            ctx.shadowBlur = isSelected ? 20 : 8
+            ctx.shadowColor = isSelected ? '#ffffff' : (score > 70 ? '#10b981' : '#f59e0b')
+            ctx.strokeStyle = isSelected ? '#ffffff' : (score > 70 ? '#10b981' : '#f59e0b')
+            ctx.lineWidth = isSelected ? 4 : 2
+            ctx.strokeRect(x, y, w, h)
+            ctx.shadowBlur = 0
+            
+            // ... (原有标签逻辑)
+            // 工作面标签
+            ctx.fillStyle = '#fff'
+            ctx.font = `bold ${Math.max(10, 12 / scale)}px "Courier New"`
+            ctx.textAlign = 'center'
+            const labelY = isSelected ? y + h/2 - 10 : y + h/2 - 5;
+            ctx.fillText(face.id || `WF_${String(idx + 1).padStart(2, '0')}`, x + w / 2, labelY)
+            
+            if (isSelected) {
+               ctx.font = `${Math.max(8, 10 / scale)}px sans-serif`
+               ctx.fillText(`${w}m x ${h}m`, x + w/2, y + h/2 + 10)
+               ctx.fillText(`${score.toFixed(0)}分`, x + w/2, y + h/2 + 25)
+            } else {
+               ctx.font = `${Math.max(8, 10 / scale)}px "Courier New"`
+               ctx.fillText(`${score.toFixed(0)}分`, x + w / 2, y + h / 2 + 10)
+            }
+          }
         })
       }
     }
@@ -1104,6 +1212,21 @@ const MiningDesignSystem = () => {
       >
         <Save size={14} /> Report
       </button>
+      <button 
+        onClick={async () => {
+          try {
+            addLog('正在导出 DXF 设计图纸...', 'loading');
+            await api.exportDesignDXF();
+            addLog('DXF 导出成功', 'success');
+          } catch (e) {
+            addLog('DXF 导出失败: ' + e.message, 'warning');
+          }
+        }}
+        disabled={!designData}
+        className={`flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-blue-900/20 border border-blue-400/20 transition-all hover:scale-105 ${!designData ? 'opacity-50 cursor-not-allowed' : ''}`}
+      >
+        <FolderOpen size={14} /> DXF
+      </button>
     </div>
     </header>
 
@@ -1176,6 +1299,30 @@ const MiningDesignSystem = () => {
             </select>
           </div>
           
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400 uppercase tracking-wider">设计参数</label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500">工作面宽度 (m)</label>
+                <input 
+                  type="number" 
+                  value={designParams.faceWidth}
+                  onChange={(e) => setDesignParams({...designParams, faceWidth: parseFloat(e.target.value)})}
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">煤柱宽度 (m)</label>
+                <input 
+                  type="number" 
+                  value={designParams.pillarWidth}
+                  onChange={(e) => setDesignParams({...designParams, pillarWidth: parseFloat(e.target.value)})}
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-xs text-gray-400 uppercase tracking-wider">缩放级别</label>
             <div className="flex items-center gap-3">
@@ -1413,6 +1560,7 @@ const MiningDesignSystem = () => {
           onMouseDown={handleCanvasMouseDown}
           onMouseUp={handleCanvasMouseUp}
           onMouseLeave={handleCanvasMouseUp}
+          onClick={handleCanvasClick}
           onDoubleClick={handleCanvasDoubleClick}
         />
                 
@@ -1514,10 +1662,10 @@ const MiningDesignSystem = () => {
         </button>
         <button 
           onClick={handleResetView} 
-          className="text-gray-400 hover:text-white transition-colors text-xs font-bold"
-          title="重置视图"
+          className="text-gray-400 hover:text-white transition-colors"
+          title="一键复位视图"
         >
-          1:1
+          <Crosshair size={18}/>
         </button>
       </div>
 
@@ -1586,6 +1734,62 @@ const MiningDesignSystem = () => {
           );
         })}
       </div>
+
+      {activeTab === 'synthesis' && designData && (
+        <div className="border-t border-gray-700/50 bg-gray-900/20 p-4 overflow-y-auto max-h-60">
+          <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Cpu size={14} className="text-purple-400"/> Design Basis
+          </h4>
+          
+          {/* Selected Workface Details */}
+          {selectedWorkface ? (
+            <div className="bg-purple-900/20 border border-purple-500/30 rounded-lg p-3 mb-3 animate-pulse-once">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-purple-300 font-bold text-sm">{selectedWorkface.id}</span>
+                <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">SELECTED</span>
+              </div>
+              <div className="space-y-1 text-xs text-gray-300">
+                <div className="flex justify-between"><span>Width:</span> <span className="font-mono">{selectedWorkface.width}m</span></div>
+                <div className="flex justify-between"><span>Length:</span> <span className="font-mono">{selectedWorkface.length}m</span></div>
+                <div className="flex justify-between"><span>Area:</span> <span className="font-mono">{selectedWorkface.area}m²</span></div>
+                <div className="flex justify-between"><span>Score:</span> <span className="font-mono text-green-400">{selectedWorkface.avgScore?.toFixed(1)}</span></div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[10px] text-gray-500 italic mb-3 text-center border border-dashed border-gray-700 rounded p-2">
+              Click on a workface to view details
+            </div>
+          )}
+
+          {/* General Design Params */}
+          <div className="space-y-2 text-[10px]">
+            <div className="flex justify-between items-center border-b border-gray-800 pb-1">
+              <span className="text-gray-400">Mining Method</span>
+              <span className="text-white font-mono">{designData.stats?.miningMethod || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-gray-800 pb-1">
+              <span className="text-gray-400">Layout Direction</span>
+              <span className="text-white font-mono uppercase">{designData.stats?.layoutDirection || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-gray-800 pb-1">
+              <span className="text-gray-400">Dip Angle</span>
+              <span className="text-white font-mono">{designData.geologyParams?.dipAngle?.toFixed(1)}°</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-gray-800 pb-1">
+              <span className="text-gray-400">Avg Thickness</span>
+              <span className="text-white font-mono">{designData.geologyParams?.avgThickness?.toFixed(2)}m</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-gray-800 pb-1">
+              <span className="text-gray-400">Pillar Width</span>
+              <span className="text-amber-300 font-mono">{designData.designParams?.pillarWidth}m</span>
+            </div>
+             <div className="flex justify-between items-center border-b border-gray-800 pb-1">
+              <span className="text-gray-400">Face Width</span>
+              <span className="text-blue-300 font-mono">{designData.designParams?.workfaceWidth}m</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'synthesis' && (
         <div className="border-t border-gray-700/50 bg-gradient-to-t from-blue-900/20 to-transparent p-5">
