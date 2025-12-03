@@ -635,13 +635,42 @@ const MiningDesignSystem = () => {
     if (!canvasRef.current) return
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
-    const width = canvas.width
-    const height = canvas.height
+    
+    // High DPI Support
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    
+    // Only resize if dimensions changed
+    if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        // Reset scale after resize
+        ctx.scale(dpr, dpr);
+    } else {
+        // If not resizing, we still need to clear and set up the transform
+        // But since we are in a loop, we usually just clear.
+        // However, ctx.scale(dpr, dpr) is persistent if we don't restore? 
+        // Actually, it's safer to just reset transform every frame or rely on save/restore.
+        // Let's just use the width/height for clearing.
+    }
+    
+    // We need to handle the scaling carefully. 
+    // If we set canvas.width, the context is reset.
+    // So we should probably do the resize check outside animate or just ensure we scale correctly.
+    
+    // Let's simplify: Just use the canvas dimensions for clearing
+    const width = canvas.width / dpr
+    const height = canvas.height / dpr
+    
+    // Reset transform to identity before clearing to ensure full clear
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Apply DPI scale
+    ctx.scale(dpr, dpr);
 
     frameRef.current += 1
     const time = frameRef.current
-
-    ctx.clearRect(0, 0, width, height)
 
     // 应用缩放和平移变换
     ctx.save()
@@ -951,20 +980,40 @@ const MiningDesignSystem = () => {
         const isActive = activeTab === 'analysis' || activeTab === 'synthesis'
         const isSelected = selectedBorehole && selectedBorehole.id === hole.id
         
-        // 钻孔点
-        ctx.fillStyle = isSelected ? '#fbbf24' : (isActive ? '#fff' : 'rgba(255,255,255,0.5)')
-        ctx.beginPath()
-        const r = isSelected ? 5 : (isActive ? 3 + Math.sin(time * 0.1 + idx) * 0.5 : 2)
-        ctx.arc(hole.x, hole.y, r, 0, Math.PI * 2)
-        ctx.fill()
+        // 钻孔样式：同心圆 (Drawing Regulations)
+        // 调整：减小圆圈大小，增大文字大小，优化缩放逻辑
         
-        // 选中高亮
+        // 外圆 (Screen size: radius ~2.5px -> diameter 5px)
+        ctx.strokeStyle = isSelected ? '#fbbf24' : '#ffffff';
+        ctx.lineWidth = 1 / scale; 
+        ctx.beginPath();
+        const outerR = 2.5 / scale; 
+        ctx.arc(hole.x, hole.y, outerR, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // 内圆 (Screen size: radius ~1px)
+        ctx.fillStyle = isSelected ? '#fbbf24' : '#ffffff';
+        ctx.beginPath();
+        const innerR = 0.8 / scale;
+        ctx.arc(hole.x, hole.y, innerR, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 钻孔名称标注
+        // 始终显示，字体调大 (Screen size: ~12px) - 用户反馈太大，调小一点
+        ctx.fillStyle = isSelected ? '#fbbf24' : 'rgba(255, 255, 255, 0.9)';
+        // 使用 bold 增加清晰度
+        ctx.font = `bold ${12 / scale}px sans-serif`;
+        ctx.textAlign = 'left';
+        // 增加偏移量，避免压住圆圈
+        ctx.fillText(hole.id, hole.x + 4 / scale, hole.y + 4 / scale);
+        
+        // 选中高亮 (额外的光圈)
         if (isSelected) {
-          ctx.strokeStyle = '#fbbf24'
-          ctx.lineWidth = 2
-          ctx.beginPath()
-          ctx.arc(hole.x, hole.y, 10, 0, Math.PI * 2)
-          ctx.stroke()
+          ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
+          ctx.lineWidth = 3 / scale;
+          ctx.beginPath();
+          ctx.arc(hole.x, hole.y, 6 / scale, 0, Math.PI * 2);
+          ctx.stroke();
         }
       })
     }

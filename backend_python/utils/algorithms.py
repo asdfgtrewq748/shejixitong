@@ -29,11 +29,19 @@ def generate_smart_layout(
     # 1. 创建采区边界多边形
     boundary_poly = create_polygon_from_points(boundary_points)
     
+    if not boundary_poly.is_valid:
+        print("Warning: Invalid boundary polygon, attempting to fix...")
+        boundary_poly = boundary_poly.buffer(0)
+        
+    print(f"Boundary area: {boundary_poly.area}")
+    
     # 2. 内缩边界（预留边界煤柱）
     # buffer(negative) 可以实现内缩
     mining_area = boundary_poly.buffer(-boundary_margin)
+    print(f"Mining area after margin: {mining_area.area}")
     
     if mining_area.is_empty:
+        print("Mining area is empty after margin!")
         return {"workfaces": [], "pillars": [], "stats": {}}
 
     # 3. 确定布局方向
@@ -73,7 +81,10 @@ def generate_smart_layout(
     current_x = min_x
     face_id = 1
     
-    while current_x + face_width <= max_x:
+    # Fix: Allow partial overlap at the end. 
+    # Previously: while current_x + face_width <= max_x
+    # This prevented generating faces if the area width < face_width
+    while current_x < max_x:
         # 创建候选工作面矩形 (在旋转后的坐标系中)
         # 这里的 height 取整个采区的高度，稍后求交集
         candidate_rect = box(current_x, min_y, current_x + face_width, max_y)
@@ -86,14 +97,13 @@ def generate_smart_layout(
             parts = [intersection] if intersection.geom_type == 'Polygon' else intersection.geoms
             
             for part in parts:
-                if part.area < 1000: # 忽略太小的碎片
+                if part.area < 500: # 降低最小面积阈值，避免漏掉小块
                     continue
                     
                 # 再次旋转回原始坐标系
                 original_shape = rotate(part, -rotation_angle, origin=mining_area.centroid)
                 
                 # 获取外接矩形作为简化的工作面表示（前端好画）
-                # 或者直接输出多边形顶点
                 bounds = original_shape.minimum_rotated_rectangle
                 coords = list(bounds.exterior.coords)
                 
@@ -120,8 +130,10 @@ def generate_smart_layout(
         
         current_x += face_width + pillar_width
         
-    # 5. 生成巷道网络 (MST)
-    roadways = generate_roadways(workfaces, boundary_points)
+    # 5. 生成巷道网络 (基于边界的主巷道 + 联络巷)
+    # 传入旋转角度和中心点，以便在生成巷道时使用相同的坐标系
+    # 传入 rotated_area 以便检测边界距离
+    roadways = generate_roadways(workfaces, boundary_points, rotation_angle, mining_area.centroid, rotated_area)
     
     return {
         "workfaces": workfaces,
@@ -133,55 +145,130 @@ def generate_smart_layout(
         }
     }
 
-def generate_roadways(workfaces: List[Dict], boundary_points: List[Dict]) -> List[Dict]:
+def generate_roadways(workfaces: List[Dict], boundary_points: List[Dict], rotation_angle: float = 0, centroid: Point = None, rotated_area: Polygon = None) -> List[Dict]:
     """
-    使用最小生成树 (MST) 生成连接所有工作面的巷道网络
+    生成巷道网络：
+    1. 识别采区最佳一侧（上下左右）作为主运输大巷
+    2. 从每个工作面生成联络巷连接到主大巷
     """
     if not workfaces:
         return []
         
-    # 构建图
-    G = nx.Graph()
-    
-    # 添加节点：工作面中心点
-    centers = [(w['center_x'], w['center_y']) for w in workfaces]
-    
-    # 添加一个"井底车场"节点（假设在边界的最低点）
-    if boundary_points:
-        min_y_point = min(boundary_points, key=lambda p: p['y'])
-        start_node = (min_y_point['x'], min_y_point['y'])
-        centers.append(start_node)
-    
-    if len(centers) < 2:
-        return []
-    
-    # 添加边：完全图（所有点两两相连，权重为距离）
-    for i in range(len(centers)):
-        for j in range(i + 1, len(centers)):
-            p1 = centers[i]
-            p2 = centers[j]
-            dist = np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
-            G.add_edge(i, j, weight=dist)
-            
-    # 计算最小生成树
-    mst = nx.minimum_spanning_tree(G)
-    
     roadways = []
     road_id = 1
     
-    for u, v in mst.edges():
-        p1 = centers[u]
-        p2 = centers[v]
+    # 1. 确定主大巷位置
+    # 使用旋转后的坐标系来确定"底部"
+    # 找到所有工作面在旋转坐标系下的 min_y
+    
+    # 如果没有传入 centroid，重新计算（不应该发生）
+    if not centroid:
+        poly = create_polygon_from_points(boundary_points)
+        centroid = poly.centroid
+        
+    # 将所有工作面中心点旋转到水平坐标系
+    rotated_centers = []
+    for wf in workfaces:
+        p = Point(wf['center_x'], wf['center_y'])
+        rp = rotate(p, rotation_angle, origin=centroid)
+        rotated_centers.append({'x': rp.x, 'y': rp.y, 'original': wf})
+        
+    if not rotated_centers:
+        return []
+        
+    # 找到工作面群的边界框
+    wf_min_x = min(p['x'] for p in rotated_centers)
+    wf_max_x = max(p['x'] for p in rotated_centers)
+    wf_min_y = min(p['y'] for p in rotated_centers)
+    wf_max_y = max(p['y'] for p in rotated_centers)
+
+    # 决策：主大巷放在上面还是下面？
+    # 检查旋转后的采区边界，看哪边空间大
+    if rotated_area:
+        bounds = rotated_area.bounds # minx, miny, maxx, maxy
+        area_min_y = bounds[1]
+        area_max_y = bounds[3]
+        
+        dist_bottom = wf_min_y - area_min_y
+        dist_top = area_max_y - wf_max_y
+        
+        # 选择空间较大的一侧，或者默认为底部
+        # 如果空间都很大，优先选择底部（通常是运输巷）
+        if dist_top > dist_bottom + 50: # 只有当顶部空间显著更大时才选顶部
+            main_road_y = wf_max_y + 30
+            is_top = True
+        else:
+            main_road_y = wf_min_y - 30
+            is_top = False
+    else:
+        main_road_y = wf_min_y - 30
+        is_top = False
+    
+    # 主大巷起点和终点 (延伸一点)
+    main_start = Point(wf_min_x - 50, main_road_y)
+    main_end = Point(wf_max_x + 50, main_road_y)
+    
+    # 旋转回原始坐标系
+    real_start = rotate(main_start, -rotation_angle, origin=centroid)
+    real_end = rotate(main_end, -rotation_angle, origin=centroid)
+    
+    # 添加主大巷
+    roadways.append({
+        "id": "Main-Transport",
+        "type": "main",
+        "path": [
+            {"x": real_start.x, "y": real_start.y},
+            {"x": real_end.x, "y": real_end.y}
+        ],
+        "length": real_start.distance(real_end)
+    })
+    
+    # 2. 生成联络巷 (Gate Roads)
+    # 从每个工作面中心垂直连接到主大巷
+    for i, wf in enumerate(rotated_centers):
+        # 起点：工作面中心
+        # 终点：主大巷上的投影点 (x, main_road_y)
+        
+        start_p = Point(wf['x'], wf['y'])
+        end_p = Point(wf['x'], main_road_y)
+        
+        # 旋转回原始坐标系
+        real_s = rotate(start_p, -rotation_angle, origin=centroid)
+        real_e = rotate(end_p, -rotation_angle, origin=centroid)
         
         roadways.append({
-            "id": f"RW-{road_id}",
-            "type": "transport",
+            "id": f"Gate-{i+1}",
+            "type": "gate",
             "path": [
-                {"x": p1[0], "y": p1[1]},
-                {"x": p2[0], "y": p2[1]}
+                {"x": real_s.x, "y": real_s.y},
+                {"x": real_e.x, "y": real_e.y}
             ],
-            "length": mst[u][v]['weight']
+            "length": start_p.distance(end_p)
         })
-        road_id += 1
+        
+    return roadways
+    
+    # 2. 生成联络巷 (从每个工作面中心垂直连接到主大巷)
+    for i, rc in enumerate(rotated_centers):
+        # 在旋转坐标系中，垂直向下连接到 main_road_y
+        # 起点：工作面中心
+        # 终点：(rc.x, main_road_y)
+        
+        p_start = Point(rc['x'], rc['y'])
+        p_end = Point(rc['x'], main_road_y)
+        
+        # 旋转回原始坐标系
+        real_p_start = rotate(p_start, -rotation_angle, origin=centroid)
+        real_p_end = rotate(p_end, -rotation_angle, origin=centroid)
+        
+        roadways.append({
+            "id": f"Gate-{i+1}",
+            "type": "gate",
+            "path": [
+                {"x": real_p_start.x, "y": real_p_start.y},
+                {"x": real_p_end.x, "y": real_p_end.y}
+            ],
+            "length": real_p_start.distance(real_p_end)
+        })
         
     return roadways
