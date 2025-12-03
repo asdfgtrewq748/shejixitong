@@ -97,6 +97,8 @@ async def generate_design(params: Dict[str, Any] = Body(...)):
     # 获取参数 (默认宽度改为 200)
     face_width = params.get("faceWidth", 200.0)
     pillar_width = params.get("pillarWidth", 20.0)
+    user_edits = params.get("userEdits", {})
+    manual_roadways = user_edits.get("roadways", [])
     
     # 1. 智能生成工作面
     print(f"Generating design with params: face_width={face_width}, pillar_width={pillar_width}")
@@ -107,7 +109,8 @@ async def generate_design(params: Dict[str, Any] = Body(...)):
         dip_angle=0,
         dip_direction=0,
         face_width=float(face_width),
-        pillar_width=float(pillar_width)
+        pillar_width=float(pillar_width),
+        manual_roadways=manual_roadways
     )
     
     panels = result.get("workfaces", [])

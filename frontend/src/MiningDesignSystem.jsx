@@ -141,9 +141,9 @@ const MiningDesignSystem = () => {
       const dataWidth = maxX - minX;
       const dataHeight = maxY - minY;
       
-      // 计算缩放比例（留出 10% 边距）
-      const scaleX = (canvasWidth * 0.8) / dataWidth;
-      const scaleY = (canvasHeight * 0.8) / dataHeight;
+      // 计算缩放比例（留出更多边距，避免初始视图过大）
+      const scaleX = (canvasWidth * 0.5) / dataWidth;
+      const scaleY = (canvasHeight * 0.5) / dataHeight;
       const newScale = Math.min(scaleX, scaleY, 1); // 不超过1倍
       
       // 计算平移偏移使数据居中
@@ -392,9 +392,9 @@ const MiningDesignSystem = () => {
       const dataWidth = maxX - minX;
       const dataHeight = maxY - minY;
       
-      // 计算缩放比例（留出 10% 边距）
-      const scaleX = (canvasWidth * 0.8) / dataWidth;
-      const scaleY = (canvasHeight * 0.8) / dataHeight;
+      // 计算缩放比例（留出更多边距，避免初始视图过大）
+      const scaleX = (canvasWidth * 0.5) / dataWidth;
+      const scaleY = (canvasHeight * 0.5) / dataHeight;
       const newScale = Math.min(scaleX, scaleY); // 允许放大以适应屏幕
       
       // 计算平移偏移使数据居中
@@ -429,6 +429,7 @@ const MiningDesignSystem = () => {
       setTempWorkface(null);
       if (mode === 'roadway') {
         addLog('进入巷道编辑模式：点击添加路径点，双击完成', 'info');
+        addLog('提示：绘制主巷道将作为工作面设计的基准方向', 'info');
       } else if (mode === 'workface') {
         addLog('进入工作面编辑模式：拖拽绘制矩形', 'info');
       }
@@ -1216,11 +1217,11 @@ const MiningDesignSystem = () => {
       </div>
       <div>
       <h1 className="text-2xl font-black tracking-widest text-white uppercase" style={{ textShadow: '0 0 10px rgba(59, 130, 246, 0.5)' }}>
-        GeoMind <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">NEXUS</span>
+        GeoMind <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">智能采矿设计系统</span>
       </h1>
       <div className="flex items-center gap-2 text-[10px] text-gray-400 tracking-wider">
         <span className="w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
-        SYSTEM ONLINE // V5.0.1
+        系统在线 // V5.0.1
       </div>
       </div>
     </div>
@@ -1259,7 +1260,7 @@ const MiningDesignSystem = () => {
         onClick={handleExportReport}
         className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-emerald-900/20 border border-emerald-400/20 transition-all hover:scale-105"
       >
-        <Save size={14} /> Report
+        <Save size={14} /> 导出报告
       </button>
       <button 
         onClick={async () => {
@@ -1274,7 +1275,7 @@ const MiningDesignSystem = () => {
         disabled={!designData}
         className={`flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-blue-900/20 border border-blue-400/20 transition-all hover:scale-105 ${!designData ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        <FolderOpen size={14} /> DXF
+        <FolderOpen size={14} /> 导出 DXF
       </button>
     </div>
     </header>
@@ -1422,7 +1423,7 @@ const MiningDesignSystem = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between pb-2 border-b border-gray-700/50">
             <h3 className="text-xs uppercase tracking-[0.2em] text-blue-400 font-bold flex items-center gap-2">
-              <Database size={12} /> Data Sources
+              <Database size={12} /> 数据源
             </h3>
             {/* 导入模式切换 */}
             <div className="flex bg-gray-800/50 rounded-full p-0.5 border border-gray-700">
@@ -1520,13 +1521,13 @@ const MiningDesignSystem = () => {
 
         <div className="space-y-6">
           <h3 className="text-xs uppercase tracking-[0.2em] text-purple-400 font-bold flex items-center gap-2 pb-2 border-b border-gray-700/50">
-            <Settings size={12} /> Parameters
+            <Settings size={12} /> 参数设置
           </h3>
 
           {[
-            { key: 'safety', label: 'Safety Factor', icon: ShieldCheck, color: 'text-blue-400', accent: 'accent-blue-500', bg: 'bg-blue-500' },
-            { key: 'economic', label: 'Economic Value', icon: DollarSign, color: 'text-amber-400', accent: 'accent-amber-500', bg: 'bg-amber-500' },
-            { key: 'env', label: 'Eco-Friendly', icon: Leaf, color: 'text-emerald-400', accent: 'accent-emerald-500', bg: 'bg-emerald-500' },
+            { key: 'safety', label: '安全系数', icon: ShieldCheck, color: 'text-blue-400', accent: 'accent-blue-500', bg: 'bg-blue-500' },
+            { key: 'economic', label: '经济效益', icon: DollarSign, color: 'text-amber-400', accent: 'accent-amber-500', bg: 'bg-amber-500' },
+            { key: 'env', label: '环境友好', icon: Leaf, color: 'text-emerald-400', accent: 'accent-emerald-500', bg: 'bg-emerald-500' },
           ].map(item => (
             <div key={item.key} className="space-y-3 group">
               <div className="flex justify-between text-sm items-center">
@@ -1572,7 +1573,7 @@ const MiningDesignSystem = () => {
             )}
             <div className="relative z-10 flex items-center gap-2">
               {isLoading ? <Activity className="animate-spin" /> : <Play fill="currentColor" size={16} />}
-              {isLoading ? 'PROCESSING...' : 'GENERATE OPTIMAL DESIGN'}
+              {isLoading ? '正在计算...' : '生成最优设计方案'}
             </div>
           </button>
         </div>
@@ -1582,15 +1583,15 @@ const MiningDesignSystem = () => {
     <section className="flex-1 relative flex flex-col rounded-xl overflow-hidden glass-panel border-gray-700/50 shadow-2xl">
       <div className="absolute top-0 left-0 right-0 h-12 bg-gradient-to-b from-gray-900/90 to-transparent z-10 flex items-center justify-between px-4 pointer-events-none">
         <div className="flex gap-4 text-[10px] text-gray-400 font-mono">
-          <span className="flex items-center gap-1"><Crosshair size={10} /> COORDS: {mousePos.x}, {mousePos.y}</span>
-          <span className="flex items-center gap-1"><Maximize2 size={10} /> SCALE: {(scale * 100).toFixed(0)}%</span>
+          <span className="flex items-center gap-1"><Crosshair size={10} /> 坐标: {mousePos.x}, {mousePos.y}</span>
+          <span className="flex items-center gap-1"><Maximize2 size={10} /> 比例: {(scale * 100).toFixed(0)}%</span>
         </div>
         <div className="flex gap-2">
           <div className="bg-black/40 backdrop-blur rounded px-2 py-1 border border-gray-700/50 flex items-center gap-2 text-[10px] text-gray-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.8)]"></span> HIGH SUITABILITY
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.8)]"></span> 高适宜区
           </div>
           <div className="bg-black/40 backdrop-blur rounded px-2 py-1 border border-gray-700/50 flex items-center gap-2 text-[10px] text-gray-300">
-            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.8)]"></span> HAZARD ZONE
+            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.8)]"></span> 危险区域
           </div>
         </div>
       </div>
@@ -1666,21 +1667,23 @@ const MiningDesignSystem = () => {
         {/* 编辑模式按钮 */}
         <button 
           onClick={() => toggleEditMode('roadway')} 
-          className={`transition-colors ${isEditing && editMode === 'roadway' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}
+          className={`flex items-center gap-2 px-3 py-1 rounded-full transition-colors ${isEditing && editMode === 'roadway' ? 'bg-blue-900/50 text-blue-400 border border-blue-500/50' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
           title="绘制巷道"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 6 L12 4 L20 6 L20 18 L12 20 L4 18 Z M4 6 L20 18 M20 6 L4 18"></path>
           </svg>
+          <span className="text-xs font-bold">绘制巷道</span>
         </button>
         <button 
           onClick={() => toggleEditMode('workface')} 
-          className={`transition-colors ${isEditing && editMode === 'workface' ? 'text-orange-400' : 'text-gray-400 hover:text-white'}`}
+          className={`flex items-center gap-2 px-3 py-1 rounded-full transition-colors ${isEditing && editMode === 'workface' ? 'bg-orange-900/50 text-orange-400 border border-orange-500/50' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
           title="绘制工作面"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
           </svg>
+          <span className="text-xs font-bold">绘制工作面</span>
         </button>
         {(userEdits.roadways.length > 0 || userEdits.workfaces.length > 0) && (
           <button 

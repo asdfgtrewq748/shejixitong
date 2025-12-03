@@ -21,7 +21,8 @@ def generate_smart_layout(
     dip_direction: float,
     face_width: float,
     pillar_width: float,
-    boundary_margin: float = 30.0
+    boundary_margin: float = 30.0,
+    manual_roadways: List[Dict] = None
 ) -> Dict[str, Any]:
     """
     使用 Shapely 进行智能工作面布局
@@ -45,30 +46,46 @@ def generate_smart_layout(
         return {"workfaces": [], "pillars": [], "stats": {}}
 
     # 3. 确定布局方向
-    # 将采区旋转到水平方向以便于切割
-    # 旋转角度 = -dip_direction (逆时针旋转使其水平)
-    # 这里简化逻辑：尝试将多边形的主轴旋转到 X 轴
+    rotation_angle = 0
+    roadways = []
     
-    # 计算最小外接矩形
-    min_rect = mining_area.minimum_rotated_rectangle
-    
-    # 获取矩形坐标
-    rect_coords = list(min_rect.exterior.coords)
-    
-    # 计算长边角度
-    edge_angles = []
-    for i in range(len(rect_coords) - 1):
-        p1 = rect_coords[i]
-        p2 = rect_coords[i+1]
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        length = np.sqrt(dx**2 + dy**2)
-        angle = np.degrees(np.arctan2(dy, dx))
-        edge_angles.append((length, angle))
-    
-    # 找到最长边对应的角度，作为旋转基准
-    edge_angles.sort(key=lambda x: x[0], reverse=True)
-    rotation_angle = -edge_angles[0][1] # 旋转使其水平
+    if manual_roadways and len(manual_roadways) > 0:
+        # 使用手动巷道作为基准
+        roadways = manual_roadways
+        main_road = manual_roadways[0]
+        path = main_road.get('path', [])
+        if len(path) >= 2:
+            # 计算巷道整体方向 (起点到终点)
+            p1 = path[0]
+            p2 = path[-1]
+            dx = p2['x'] - p1['x']
+            dy = p2['y'] - p1['y']
+            # 旋转角度 = -巷道角度 (使其水平)
+            rotation_angle = -np.degrees(np.arctan2(dy, dx))
+            print(f"Using manual roadway direction: {-rotation_angle} degrees")
+    else:
+        # 自动寻找最长边作为基准
+        # 计算最小外接矩形
+        min_rect = mining_area.minimum_rotated_rectangle
+        
+        # 获取矩形坐标
+        rect_coords = list(min_rect.exterior.coords)
+        
+        # 计算长边角度
+        edge_angles = []
+        for i in range(len(rect_coords) - 1):
+            p1 = rect_coords[i]
+            p2 = rect_coords[i+1]
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            length = np.sqrt(dx**2 + dy**2)
+            angle = np.degrees(np.arctan2(dy, dx))
+            edge_angles.append((length, angle))
+        
+        # 找到最长边对应的角度，作为旋转基准
+        edge_angles.sort(key=lambda x: x[0], reverse=True)
+        rotation_angle = -edge_angles[0][1] # 旋转使其水平
+        print(f"Using auto-detected direction: {-rotation_angle} degrees")
     
     # 旋转采区
     rotated_area = rotate(mining_area, rotation_angle, origin='centroid')
@@ -131,9 +148,9 @@ def generate_smart_layout(
         current_x += face_width + pillar_width
         
     # 5. 生成巷道网络 (基于边界的主巷道 + 联络巷)
-    # 传入旋转角度和中心点，以便在生成巷道时使用相同的坐标系
-    # 传入 rotated_area 以便检测边界距离
-    roadways = generate_roadways(workfaces, boundary_points, rotation_angle, mining_area.centroid, rotated_area)
+    # 如果没有手动巷道，则自动生成
+    if not manual_roadways:
+        roadways = generate_roadways(workfaces, boundary_points, rotation_angle, mining_area.centroid, rotated_area)
     
     return {
         "workfaces": workfaces,
@@ -244,31 +261,6 @@ def generate_roadways(workfaces: List[Dict], boundary_points: List[Dict], rotati
                 {"x": real_e.x, "y": real_e.y}
             ],
             "length": start_p.distance(end_p)
-        })
-        
-    return roadways
-    
-    # 2. 生成联络巷 (从每个工作面中心垂直连接到主大巷)
-    for i, rc in enumerate(rotated_centers):
-        # 在旋转坐标系中，垂直向下连接到 main_road_y
-        # 起点：工作面中心
-        # 终点：(rc.x, main_road_y)
-        
-        p_start = Point(rc['x'], rc['y'])
-        p_end = Point(rc['x'], main_road_y)
-        
-        # 旋转回原始坐标系
-        real_p_start = rotate(p_start, -rotation_angle, origin=centroid)
-        real_p_end = rotate(p_end, -rotation_angle, origin=centroid)
-        
-        roadways.append({
-            "id": f"Gate-{i+1}",
-            "type": "gate",
-            "path": [
-                {"x": real_p_start.x, "y": real_p_start.y},
-                {"x": real_p_end.x, "y": real_p_end.y}
-            ],
-            "length": real_p_start.distance(real_p_end)
         })
         
     return roadways
