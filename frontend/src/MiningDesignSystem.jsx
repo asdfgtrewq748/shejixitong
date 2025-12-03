@@ -3,10 +3,11 @@ import {
   Layers, Upload, Database, Activity, ShieldCheck, DollarSign, Leaf, Cpu,
   Map as MapIcon, Settings, ChevronRight, Play, Save, FileText,
   Zap, Search, AlertCircle, CheckCircle, Crosshair, BarChart3, Wind, Droplets, Hammer,
-  Maximize2, Minimize2, Grid, FolderOpen
+  Maximize2, Minimize2, Grid, FolderOpen, Box, Terminal
 } from 'lucide-react';
 import * as api from './api';
 import FileUploader from './FileUploader';
+import GeoModelPreview from './components/GeoModelPreview';
 
 const GlobalStyles = () => (
   <style>{`
@@ -1761,32 +1762,13 @@ const MiningDesignSystem = () => {
 
     </section>
 
-    <aside className="w-72 glass-panel rounded-xl flex flex-col overflow-hidden animate-[slideInRight_0.5s_ease-out]">
-      <div className="p-4 border-b border-gray-700/50 bg-gray-900/30">
-        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-          <FileText size={12}/> System Terminal
-        </h3>
-      </div>
-            
-      <div className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-[10px] scroll-smooth">
-        {systemLog.length === 0 && <span className="text-gray-600 animate-pulse">_ Waiting for input...</span>}
-        {systemLog.map((log, index) => {
-          const [text, type] = log.split('|');
-          const colors = { 
-            info: 'text-gray-300 border-gray-600', 
-            success: 'text-green-400 border-green-600', 
-            warning: 'text-amber-400 border-amber-600',
-            loading: 'text-blue-300 border-blue-600'
-          };
-          return (
-            <div key={index} className={`border-l-2 pl-2 py-1 mb-1 animate-[fadeIn_0.2s_ease-out] ${colors[type] || colors.info}`}>
-              <span className="opacity-50 mr-2">{text.match(/^\[(.*?)\]/)[0]}</span>
-              <span>{text.replace(/^\[.*?\]\s/, '')}</span>
-            </div>
-          );
-        })}
+    <aside className="w-80 glass-panel rounded-xl flex flex-col overflow-hidden animate-[slideInRight_0.5s_ease-out]">
+      {/* 1. 建模预览区域 (占据剩余空间) */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <GeoModelPreview />
       </div>
 
+      {/* 2. 设计依据 & 预计指标 (条件渲染) */}
       {activeTab === 'synthesis' && designData && (
         <div className="border-t border-gray-700/50 bg-gray-900/20 p-4 overflow-y-auto max-h-60">
           <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -1868,6 +1850,33 @@ const MiningDesignSystem = () => {
           </div>
         </div>
       )}
+
+      {/* 3. 后端日志 (固定高度) */}
+      <div className="h-40 border-t border-gray-700/50 flex flex-col bg-black/20">
+        <div className="px-4 py-2 border-b border-gray-700/30 bg-gray-900/30">
+          <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+            <Terminal size={10}/> 后端日志
+          </h3>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-[10px] scroll-smooth">
+          {systemLog.length === 0 && <span className="text-gray-600 animate-pulse">_ 等待输入...</span>}
+          {systemLog.map((log, index) => {
+            const [text, type] = log.split('|');
+            const colors = { 
+              info: 'text-gray-300 border-gray-600', 
+              success: 'text-green-400 border-green-600', 
+              warning: 'text-amber-400 border-amber-600',
+              loading: 'text-blue-300 border-blue-600'
+            };
+            return (
+              <div key={index} className={`border-l-2 pl-2 py-1 mb-1 animate-[fadeIn_0.2s_ease-out] ${colors[type] || colors.info}`}>
+                <span className="opacity-50 mr-2">{text.match(/^\[(.*?)\]/)[0]}</span>
+                <span>{text.replace(/^\[.*?\]\s/, '')}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </aside>
     </main>
   </div>
