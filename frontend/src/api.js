@@ -141,7 +141,7 @@ export async function getCoalSeams() {
  * 上传采区边界
  */
 export async function uploadBoundary(points) {
-  const res = await fetch(`${API_BASE}/boundary`, {
+  const res = await fetch(`${API_BASE}/boundary/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ points }),
@@ -153,7 +153,7 @@ export async function uploadBoundary(points) {
  * 获取当前边界
  */
 export async function getBoundary() {
-  const res = await fetch(`${API_BASE}/boundary`);
+  const res = await fetch(`${API_BASE}/boundary/`);
   return res.json();
 }
 
@@ -161,7 +161,7 @@ export async function getBoundary() {
  * 上传钻孔数据
  */
 export async function uploadBoreholes(boreholes) {
-  const res = await fetch(`${API_BASE}/boreholes`, {
+  const res = await fetch(`${API_BASE}/boreholes/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ boreholes }),
@@ -173,7 +173,7 @@ export async function uploadBoreholes(boreholes) {
  * 获取钻孔列表
  */
 export async function getBoreholes() {
-  const res = await fetch(`${API_BASE}/boreholes`);
+  const res = await fetch(`${API_BASE}/boreholes/`);
   return res.json();
 }
 
@@ -181,7 +181,7 @@ export async function getBoreholes() {
  * 计算评分（传入权重）
  */
 export async function calculateScore(weights, resolution = 50) {
-  const res = await fetch(`${API_BASE}/score`, {
+  const res = await fetch(`${API_BASE}/score/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ weights, resolution }),
@@ -193,7 +193,7 @@ export async function calculateScore(weights, resolution = 50) {
  * 获取评分结果
  */
 export async function getScore() {
-  const res = await fetch(`${API_BASE}/score`);
+  const res = await fetch(`${API_BASE}/score/`);
   return res.json();
 }
 
@@ -209,7 +209,7 @@ export async function getScoreGrid(type) {
  * 生成设计方案
  */
 export async function generateDesign(options = {}) {
-  const res = await fetch(`${API_BASE}/design`, {
+  const res = await fetch(`${API_BASE}/design/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(options),
@@ -221,7 +221,7 @@ export async function generateDesign(options = {}) {
  * 获取设计方案
  */
 export async function getDesign() {
-  const res = await fetch(`${API_BASE}/design`);
+  const res = await fetch(`${API_BASE}/design/`);
   return res.json();
 }
 
@@ -229,7 +229,7 @@ export async function getDesign() {
  * 生成地质模型
  */
 export async function generateGeology(resolution = 50) {
-  const res = await fetch(`${API_BASE}/geology`, {
+  const res = await fetch(`${API_BASE}/geology/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ resolution }),
@@ -241,7 +241,19 @@ export async function generateGeology(resolution = 50) {
  * 获取地质模型
  */
 export async function getGeology() {
-  const res = await fetch(`${API_BASE}/geology`);
+  const res = await fetch(`${API_BASE}/geology/`);
+  return res.json();
+}
+
+/**
+ * 获取钻孔分层数据（用于3D地质建模）
+ */
+export async function getBoreholeLayers() {
+  const res = await fetch(`${API_BASE}/geology/layers`);
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || error.error || '获取分层数据失败');
+  }
   return res.json();
 }
 
@@ -249,23 +261,38 @@ export async function getGeology() {
  * 导出设计方案为DXF文件
  */
 export async function exportDesignDXF() {
-  const res = await fetch(`${API_BASE}/design/export/dxf`);
-  
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.error || '导出失败');
+  try {
+    const res = await fetch(`${API_BASE}/design/export/dxf`);
+
+    if (!res.ok) {
+      // 尝试解析错误响应
+      let errorMsg = '导出失败';
+      try {
+        const error = await res.json();
+        errorMsg = error.detail || error.error || errorMsg;
+      } catch (e) {
+        // 如果无法解析 JSON，使用状态文本
+        errorMsg = res.statusText || errorMsg;
+      }
+      throw new Error(errorMsg);
+    }
+
+    // 获取文件blob
+    const blob = await res.blob();
+
+    // 创建下载链接
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mining_design_${Date.now()}.dxf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  } catch (error) {
+    if (error.message === 'Failed to fetch') {
+      throw new Error('无法连接到后端服务，请确保后端已启动 (端口 3001)');
+    }
+    throw error;
   }
-  
-  // 获取文件blob
-  const blob = await res.blob();
-  
-  // 创建下载链接
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `mining_design_${Date.now()}.dxf`;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
 }

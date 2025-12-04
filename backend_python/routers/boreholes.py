@@ -11,6 +11,32 @@ router = APIRouter()
 async def get_boreholes():
     return {"boreholes": store.boreholes}
 
+
+@router.get("/coal-seams")
+async def get_coal_seams():
+    """获取所有识别到的煤层列表"""
+    coal_seams = []
+
+    # 从分层数据中提取煤层
+    if store.borehole_layer_data:
+        df = pd.DataFrame(store.borehole_layer_data)
+
+        # 查找煤层相关列
+        seam_col = next((c for c in df.columns if '煤层' in c or 'seam' in c.lower()), None)
+        name_col = next((c for c in df.columns if '名称' in c or 'name' in c.lower()), None)
+
+        if seam_col:
+            coal_seams = df[seam_col].dropna().unique().tolist()
+        elif name_col:
+            # 从名称列中识别煤层
+            names = df[name_col].dropna().unique().tolist()
+            coal_seams = [n for n in names if '煤' in str(n)]
+
+    # 去重并排序
+    coal_seams = sorted(list(set(coal_seams)))
+
+    return {"coal_seams": coal_seams, "count": len(coal_seams)}
+
 @router.post("/")
 async def upload_boreholes_json(boreholes: Dict = Body(...)):
     # 兼容前端 { boreholes: [...] } 格式

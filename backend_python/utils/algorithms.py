@@ -1,237 +1,525 @@
+"""
+智能工作面布局算法
+
+符合采矿规程的工作面设计，考虑：
+1. 工作面长度约束 (150-300m)
+2. 推进长度约束
+3. 煤层倾角和布置方向
+4. 地质条件评分
+5. 煤柱宽度要求
+"""
+
 import numpy as np
-from shapely.geometry import Polygon, Point, LineString, box
+from shapely.geometry import Polygon, Point, LineString, box, MultiPolygon
 from shapely.affinity import rotate, translate
 from shapely.ops import unary_union
-import networkx as nx
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+from dataclasses import dataclass
+
+from utils.mining_rules import MiningRules, DEFAULT_MINING_RULES
+from utils.geology_analysis import GeologyAnalyzer
+
+
+@dataclass
+class WorkfaceCandidate:
+    """工作面候选方案"""
+    polygon: Polygon
+    center_x: float
+    center_y: float
+    length: float        # 工作面长度 (沿走向)
+    width: float         # 推进长度 (沿倾向)
+    area: float
+    score: float = 0
+    is_valid: bool = True
+    validation_msg: str = ""
+
 
 def create_polygon_from_points(points: List[Dict[str, float]]) -> Polygon:
     """从点列表创建 Shapely 多边形"""
     if not points or len(points) < 3:
         return Polygon()
-        
+
     coords = [(p['x'], p['y']) for p in points]
     if coords[0] != coords[-1]:
         coords.append(coords[0])
     return Polygon(coords)
 
+
 def generate_smart_layout(
-    boundary_points: List[Dict[str, float]], 
-    dip_angle: float, 
-    dip_direction: float,
-    face_width: float,
-    pillar_width: float,
-    boundary_margin: float = 30.0,
-    manual_roadways: List[Dict] = None
+        boundary_points: List[Dict[str, float]],
+        dip_angle: float,
+        dip_direction: float,
+        face_width: float,
+        pillar_width: float,
+        boundary_margin: float = 30.0,
+        manual_roadways: List[Dict] = None,
+        mining_rules: MiningRules = None,
+        geology_analyzer: GeologyAnalyzer = None,
+        target_seam: str = None
 ) -> Dict[str, Any]:
     """
-    使用 Shapely 进行智能工作面布局
+    智能工作面布局生成
+
+    Args:
+        boundary_points: 采区边界点
+        dip_angle: 煤层倾角 (度)
+        dip_direction: 煤层倾向 (度)
+        face_width: 工作面宽度/推进长度 (用户指定)
+        pillar_width: 煤柱宽度
+        boundary_margin: 边界煤柱宽度
+        manual_roadways: 手动绘制的巷道
+        mining_rules: 采矿规程参数
+        geology_analyzer: 地质分析器 (用于评分)
+        target_seam: 目标煤层名称
+
+    Returns:
+        包含工作面和巷道的设计结果
     """
+    # 使用默认规程参数
+    if mining_rules is None:
+        mining_rules = DEFAULT_MINING_RULES
+
     # 1. 创建采区边界多边形
     boundary_poly = create_polygon_from_points(boundary_points)
-    
+
     if not boundary_poly.is_valid:
         print("Warning: Invalid boundary polygon, attempting to fix...")
         boundary_poly = boundary_poly.buffer(0)
-        
-    print(f"Boundary area: {boundary_poly.area}")
-    
+
+    total_area = boundary_poly.area
+    print(f"采区总面积: {total_area:.0f} m²")
+
     # 2. 内缩边界（预留边界煤柱）
-    # buffer(negative) 可以实现内缩
     mining_area = boundary_poly.buffer(-boundary_margin)
-    print(f"Mining area after margin: {mining_area.area}")
-    
-    if mining_area.is_empty:
-        print("Mining area is empty after margin!")
-        return {"workfaces": [], "pillars": [], "stats": {}}
+    print(f"可采区面积: {mining_area.area:.0f} m²")
+
+    if mining_area.is_empty or mining_area.area < 1000:
+        print("可采区面积过小!")
+        return {"workfaces": [], "roadways": [], "stats": {"error": "可采区面积过小"}}
 
     # 3. 确定布局方向
+    # 优先使用手动巷道方向，其次使用煤层倾向，最后自动检测
     rotation_angle = 0
-    roadways = []
-    
+    layout_info = ""
+
     if manual_roadways and len(manual_roadways) > 0:
         # 使用手动巷道作为基准
-        roadways = manual_roadways
         main_road = manual_roadways[0]
         path = main_road.get('path', [])
         if len(path) >= 2:
-            # 计算巷道整体方向 (起点到终点)
             p1 = path[0]
             p2 = path[-1]
             dx = p2['x'] - p1['x']
             dy = p2['y'] - p1['y']
-            # 旋转角度 = -巷道角度 (使其水平)
             rotation_angle = -np.degrees(np.arctan2(dy, dx))
-            print(f"Using manual roadway direction: {-rotation_angle} degrees")
+            layout_info = f"使用手动巷道方向: {-rotation_angle:.1f}°"
+    elif dip_direction != 0:
+        # 使用煤层倾向
+        # 走向长壁：工作面沿走向布置，推进方向沿倾向
+        # 倾向长壁：工作面沿倾向布置，推进方向沿走向
+        if mining_rules.layout_direction == 'strike':
+            # 走向长壁：旋转使工作面方向与走向平行
+            strike_direction = (dip_direction + 90) % 360
+            rotation_angle = -strike_direction
+            layout_info = f"走向长壁布置，走向: {strike_direction:.1f}°"
+        else:
+            # 倾向长壁
+            rotation_angle = -dip_direction
+            layout_info = f"倾向长壁布置，倾向: {dip_direction:.1f}°"
     else:
-        # 自动寻找最长边作为基准
-        # 计算最小外接矩形
-        min_rect = mining_area.minimum_rotated_rectangle
-        
-        # 获取矩形坐标
-        rect_coords = list(min_rect.exterior.coords)
-        
-        # 计算长边角度
-        edge_angles = []
-        for i in range(len(rect_coords) - 1):
-            p1 = rect_coords[i]
-            p2 = rect_coords[i+1]
-            dx = p2[0] - p1[0]
-            dy = p2[1] - p1[1]
-            length = np.sqrt(dx**2 + dy**2)
-            angle = np.degrees(np.arctan2(dy, dx))
-            edge_angles.append((length, angle))
-        
-        # 找到最长边对应的角度，作为旋转基准
-        edge_angles.sort(key=lambda x: x[0], reverse=True)
-        rotation_angle = -edge_angles[0][1] # 旋转使其水平
-        print(f"Using auto-detected direction: {-rotation_angle} degrees")
-    
-    # 旋转采区
-    rotated_area = rotate(mining_area, rotation_angle, origin='centroid')
+        # 自动检测：使用最小外接矩形的长边作为工作面方向
+        rotation_angle, auto_info = _auto_detect_direction(mining_area, mining_rules)
+        layout_info = auto_info
+
+    print(layout_info)
+
+    # 4. 旋转采区到水平坐标系进行切割
+    centroid = mining_area.centroid
+    rotated_area = rotate(mining_area, rotation_angle, origin=centroid)
     min_x, min_y, max_x, max_y = rotated_area.bounds
-    
+
+    # 采区尺寸
+    area_width = max_x - min_x   # 沿推进方向的尺寸
+    area_length = max_y - min_y  # 沿工作面方向的尺寸
+
+    print(f"采区尺寸: 宽度(推进方向)={area_width:.0f}m, 长度(工作面方向)={area_length:.0f}m")
+
+    # 5. 确定工作面参数
+    # 工作面长度 (沿y方向，即走向)
+    face_length = _determine_face_length(area_length, mining_rules)
+
+    # 推进长度/工作面宽度 (沿x方向，即倾向)
+    # 这里 face_width 参数实际是推进长度
+    advance_length = face_width
+
+    # 区段煤柱宽度
+    section_pillar = pillar_width if pillar_width else mining_rules.section_pillar_preferred
+
+    print(f"设计参数: 工作面长度={face_length:.0f}m, 推进长度={advance_length:.0f}m, 区段煤柱={section_pillar:.0f}m")
+
+    # 6. 生成工作面
     workfaces = []
-    pillars = []
-    
-    # 4. 网格化切割
-    current_x = min_x
     face_id = 1
-    
-    # Fix: Allow partial overlap at the end. 
-    # Previously: while current_x + face_width <= max_x
-    # This prevented generating faces if the area width < face_width
-    while current_x < max_x:
-        # 创建候选工作面矩形 (在旋转后的坐标系中)
-        # 这里的 height 取整个采区的高度，稍后求交集
-        candidate_rect = box(current_x, min_y, current_x + face_width, max_y)
-        
-        # 求交集：获取实际在采区内的工作面形状
-        intersection = rotated_area.intersection(candidate_rect)
-        
-        if not intersection.is_empty:
-            # 可能被切成多个部分（如果采区形状不规则）
-            parts = [intersection] if intersection.geom_type == 'Polygon' else intersection.geoms
-            
-            for part in parts:
-                if part.area < 500: # 降低最小面积阈值，避免漏掉小块
-                    continue
-                    
-                # 再次旋转回原始坐标系
-                original_shape = rotate(part, -rotation_angle, origin=mining_area.centroid)
-                
-                # 获取外接矩形作为简化的工作面表示（前端好画）
-                bounds = original_shape.minimum_rotated_rectangle
-                coords = list(bounds.exterior.coords)
-                
-                # 计算中心点和尺寸
-                center = original_shape.centroid
-                
-                # 估算长宽
-                rect_w = face_width
-                rect_h = part.area / face_width
-                
-                workfaces.append({
-                    "id": f"WF-{face_id:02d}",
-                    "x": coords[0][0], # 仅作为参考点
-                    "y": coords[0][1],
-                    "center_x": center.x,
-                    "center_y": center.y,
-                    "width": rect_w,
-                    "length": rect_h,
-                    "area": part.area,
-                    "points": [{"x": x, "y": y} for x, y in coords[:-1]], # 多边形顶点
-                    "avgScore": 85 + np.random.random() * 10 # 模拟评分
-                })
-                face_id += 1
-        
-        current_x += face_width + pillar_width
-        
-    # 5. 生成巷道网络 (基于边界的主巷道 + 联络巷)
-    # 如果没有手动巷道，则自动生成
-    if not manual_roadways:
-        roadways = generate_roadways(workfaces, boundary_points, rotation_angle, mining_area.centroid, rotated_area)
-    
+
+    # 沿工作面方向（y方向）划分
+    # 每个"条带"就是一个工作面
+    current_y = min_y
+
+    while current_y + face_length <= max_y + 1:  # 允许小误差
+        # 确定这一条工作面的y范围
+        strip_min_y = current_y
+        strip_max_y = min(current_y + face_length, max_y)
+
+        # 实际的工作面长度
+        actual_length = strip_max_y - strip_min_y
+
+        # 检查长度是否符合规程
+        is_length_valid, length_msg = mining_rules.validate_face_length(actual_length)
+
+        if actual_length < mining_rules.face_length_min * 0.8:
+            # 长度太短，跳过或合并到上一个
+            print(f"条带 {face_id} 长度 {actual_length:.0f}m 过短，跳过")
+            current_y = strip_max_y + section_pillar
+            continue
+
+        # 创建这一条的候选矩形
+        strip_rect = box(min_x, strip_min_y, max_x, strip_max_y)
+
+        # 与可采区求交
+        intersection = rotated_area.intersection(strip_rect)
+
+        if intersection.is_empty:
+            current_y = strip_max_y + section_pillar
+            continue
+
+        # 处理可能的多个部分
+        parts = [intersection] if intersection.geom_type == 'Polygon' else list(intersection.geoms)
+
+        for part in parts:
+            if not isinstance(part, Polygon) or part.area < 500:
+                continue
+
+            # 获取这部分的边界
+            part_min_x, part_min_y, part_max_x, part_max_y = part.bounds
+            part_width = part_max_x - part_min_x
+            part_length = part_max_y - part_min_y
+
+            # 验证尺寸
+            is_valid = True
+            validation_msgs = []
+
+            # 检查工作面长度
+            length_valid, length_msg = mining_rules.validate_face_length(part_length)
+            if not length_valid:
+                validation_msgs.append(length_msg)
+                # 长度不符合但仍可接受（边缘工作面）
+                if part_length < mining_rules.face_length_min * 0.6:
+                    is_valid = False
+
+            # 检查推进长度
+            # 推进长度是整个工作面的水平推进距离
+            advance_valid, advance_msg = mining_rules.validate_advance_length(part_width)
+            if not advance_valid:
+                validation_msgs.append(advance_msg)
+
+            # 旋转回原始坐标系
+            original_shape = rotate(part, -rotation_angle, origin=centroid)
+            bounds = original_shape.minimum_rotated_rectangle
+            coords = list(bounds.exterior.coords)
+            center = original_shape.centroid
+
+            # 计算评分
+            if geology_analyzer:
+                score_data = geology_analyzer.calculate_score_at_point(
+                    center.x, center.y, target_seam
+                )
+                avg_score = score_data['total_score']
+            else:
+                # 没有地质数据时，基于位置给一个基础分
+                avg_score = 75 + (10 * (1 - face_id / 10))  # 靠前的工作面分数略高
+
+            workface = {
+                "id": f"WF-{face_id:02d}",
+                "x": coords[0][0],
+                "y": coords[0][1],
+                "center_x": center.x,
+                "center_y": center.y,
+                "width": part_width,      # 推进长度
+                "length": part_length,    # 工作面长度
+                "area": part.area,
+                "points": [{"x": x, "y": y} for x, y in coords[:-1]],
+                "avgScore": round(avg_score, 1),
+                "isValid": is_valid,
+                "validationMsg": "; ".join(validation_msgs) if validation_msgs else "符合规程",
+                "faceLength": round(part_length, 1),
+                "advanceLength": round(part_width, 1)
+            }
+
+            workfaces.append(workface)
+            face_id += 1
+
+        # 移动到下一条（加上煤柱宽度）
+        current_y = strip_max_y + section_pillar
+
+    # 如果工作面数量太少，尝试调整参数
+    if len(workfaces) == 0:
+        print("警告：未能生成任何工作面，尝试降低约束...")
+        # 降低约束重新生成
+        return _generate_fallback_layout(
+            boundary_points, rotated_area, rotation_angle, centroid,
+            mining_rules, face_width, pillar_width
+        )
+
+    # 7. 生成巷道网络
+    roadways = generate_roadways_v2(
+        workfaces, boundary_points, rotation_angle, centroid, rotated_area,
+        mining_rules
+    )
+
+    # 8. 统计信息
+    valid_count = sum(1 for wf in workfaces if wf.get('isValid', True))
+    total_workface_area = sum(wf['area'] for wf in workfaces)
+
+    stats = {
+        "totalArea": total_workface_area,
+        "count": len(workfaces),
+        "validCount": valid_count,
+        "invalidCount": len(workfaces) - valid_count,
+        "layoutDirection": layout_info,
+        "avgFaceLength": round(np.mean([wf['length'] for wf in workfaces]), 1) if workfaces else 0,
+        "avgAdvanceLength": round(np.mean([wf['width'] for wf in workfaces]), 1) if workfaces else 0,
+        "avgScore": round(np.mean([wf['avgScore'] for wf in workfaces]), 1) if workfaces else 0,
+        "miningMethod": f"{'走向' if mining_rules.layout_direction == 'strike' else '倾向'}长壁后退式开采"
+    }
+
+    print(f"生成 {len(workfaces)} 个工作面，有效 {valid_count} 个")
+
+    return {
+        "workfaces": workfaces,
+        "roadways": roadways,
+        "stats": stats
+    }
+
+
+def _auto_detect_direction(mining_area: Polygon, mining_rules: MiningRules) -> Tuple[float, str]:
+    """
+    自动检测最佳布局方向
+
+    基于最小外接矩形，选择使工作面数量最优的方向
+    """
+    min_rect = mining_area.minimum_rotated_rectangle
+    rect_coords = list(min_rect.exterior.coords)
+
+    # 计算各边的长度和角度
+    edges = []
+    for i in range(len(rect_coords) - 1):
+        p1 = rect_coords[i]
+        p2 = rect_coords[i + 1]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = np.sqrt(dx ** 2 + dy ** 2)
+        angle = np.degrees(np.arctan2(dy, dx))
+        edges.append((length, angle))
+
+    # 按长度排序
+    edges.sort(key=lambda x: x[0], reverse=True)
+
+    # 最长边作为推进方向（工作面沿短边布置）
+    long_edge_angle = edges[0][1]
+    short_edge_angle = edges[1][1] if len(edges) > 1 else long_edge_angle + 90
+
+    # 工作面应沿短边方向布置，这样工作面长度在合理范围内
+    # 推进方向沿长边
+    rotation_angle = -long_edge_angle
+
+    info = f"自动检测方向: 推进方向 {-rotation_angle:.1f}°"
+    return rotation_angle, info
+
+
+def _determine_face_length(available_length: float, mining_rules: MiningRules) -> float:
+    """
+    确定最佳工作面长度
+
+    在规程允许范围内，尽量使工作面数量为整数
+    """
+    min_len = mining_rules.face_length_min
+    max_len = mining_rules.face_length_max
+    preferred = mining_rules.face_length_preferred
+    pillar = mining_rules.section_pillar_preferred
+
+    # 如果可用长度很小，直接使用
+    if available_length <= max_len:
+        return min(available_length, max_len)
+
+    # 尝试不同的工作面长度，找到最优解
+    best_length = preferred
+    best_waste = float('inf')
+
+    for test_length in range(int(min_len), int(max_len) + 1, 10):
+        # 计算可以放置的工作面数量
+        num_faces = int((available_length + pillar) / (test_length + pillar))
+        if num_faces < 1:
+            continue
+
+        # 计算总占用
+        total_used = num_faces * test_length + (num_faces - 1) * pillar
+        waste = available_length - total_used
+
+        if 0 <= waste < best_waste:
+            best_waste = waste
+            best_length = test_length
+
+    return best_length
+
+
+def _generate_fallback_layout(
+        boundary_points: List[Dict],
+        rotated_area: Polygon,
+        rotation_angle: float,
+        centroid: Point,
+        mining_rules: MiningRules,
+        face_width: float,
+        pillar_width: float
+) -> Dict[str, Any]:
+    """
+    当标准算法无法生成工作面时的后备方案
+
+    降低约束，确保能生成至少一个工作面
+    """
+    print("使用后备布局方案...")
+
+    min_x, min_y, max_x, max_y = rotated_area.bounds
+    area_width = max_x - min_x
+    area_height = max_y - min_y
+
+    workfaces = []
+
+    # 简单地将整个区域作为一个或几个工作面
+    num_faces = max(1, int(area_height / 200))
+    face_height = area_height / num_faces
+
+    for i in range(num_faces):
+        strip_min_y = min_y + i * face_height
+        strip_max_y = min_y + (i + 1) * face_height
+
+        strip_rect = box(min_x, strip_min_y, max_x, strip_max_y)
+        intersection = rotated_area.intersection(strip_rect)
+
+        if intersection.is_empty or intersection.area < 100:
+            continue
+
+        if intersection.geom_type != 'Polygon':
+            intersection = max(intersection.geoms, key=lambda g: g.area)
+
+        original_shape = rotate(intersection, -rotation_angle, origin=centroid)
+        bounds = original_shape.minimum_rotated_rectangle
+        coords = list(bounds.exterior.coords)
+        center = original_shape.centroid
+
+        workfaces.append({
+            "id": f"WF-{i + 1:02d}",
+            "x": coords[0][0],
+            "y": coords[0][1],
+            "center_x": center.x,
+            "center_y": center.y,
+            "width": area_width,
+            "length": face_height,
+            "area": intersection.area,
+            "points": [{"x": x, "y": y} for x, y in coords[:-1]],
+            "avgScore": 70,
+            "isValid": False,
+            "validationMsg": "后备方案生成，可能不符合规程"
+        })
+
+    roadways = generate_roadways_v2(
+        workfaces, boundary_points, rotation_angle, centroid, rotated_area, mining_rules
+    )
+
     return {
         "workfaces": workfaces,
         "roadways": roadways,
         "stats": {
-            "totalArea": sum(w['area'] for w in workfaces),
+            "totalArea": sum(wf['area'] for wf in workfaces),
             "count": len(workfaces),
-            "miningMethod": "智能拟合开采"
+            "miningMethod": "后备方案"
         }
     }
 
-def generate_roadways(workfaces: List[Dict], boundary_points: List[Dict], rotation_angle: float = 0, centroid: Point = None, rotated_area: Polygon = None) -> List[Dict]:
+
+def generate_roadways_v2(
+        workfaces: List[Dict],
+        boundary_points: List[Dict],
+        rotation_angle: float,
+        centroid: Point,
+        rotated_area: Polygon,
+        mining_rules: MiningRules
+) -> List[Dict]:
     """
-    生成巷道网络：
-    1. 识别采区最佳一侧（上下左右）作为主运输大巷
-    2. 从每个工作面生成联络巷连接到主大巷
+    生成符合规程的巷道网络
+
+    包括：
+    1. 主运输大巷
+    2. 回风大巷
+    3. 各工作面的运输巷和回风巷
+    4. 开切眼
     """
     if not workfaces:
         return []
-        
+
     roadways = []
-    road_id = 1
-    
-    # 1. 确定主大巷位置
-    # 使用旋转后的坐标系来确定"底部"
-    # 找到所有工作面在旋转坐标系下的 min_y
-    
-    # 如果没有传入 centroid，重新计算（不应该发生）
-    if not centroid:
-        poly = create_polygon_from_points(boundary_points)
-        centroid = poly.centroid
-        
-    # 将所有工作面中心点旋转到水平坐标系
+
+    # 将工作面中心点旋转到水平坐标系
     rotated_centers = []
     for wf in workfaces:
         p = Point(wf['center_x'], wf['center_y'])
         rp = rotate(p, rotation_angle, origin=centroid)
-        rotated_centers.append({'x': rp.x, 'y': rp.y, 'original': wf})
-        
+        rotated_centers.append({
+            'x': rp.x,
+            'y': rp.y,
+            'id': wf['id'],
+            'width': wf['width'],
+            'length': wf['length']
+        })
+
     if not rotated_centers:
         return []
-        
-    # 找到工作面群的边界框
-    wf_min_x = min(p['x'] for p in rotated_centers)
-    wf_max_x = max(p['x'] for p in rotated_centers)
-    wf_min_y = min(p['y'] for p in rotated_centers)
-    wf_max_y = max(p['y'] for p in rotated_centers)
 
-    # 决策：主大巷放在上面还是下面？
-    # 检查旋转后的采区边界，看哪边空间大
+    # 工作面群的边界
+    wf_min_x = min(p['x'] - p['width'] / 2 for p in rotated_centers)
+    wf_max_x = max(p['x'] + p['width'] / 2 for p in rotated_centers)
+    wf_min_y = min(p['y'] - p['length'] / 2 for p in rotated_centers)
+    wf_max_y = max(p['y'] + p['length'] / 2 for p in rotated_centers)
+
+    # 采区边界
     if rotated_area:
-        bounds = rotated_area.bounds # minx, miny, maxx, maxy
-        area_min_y = bounds[1]
-        area_max_y = bounds[3]
-        
-        dist_bottom = wf_min_y - area_min_y
-        dist_top = area_max_y - wf_max_y
-        
-        # 选择空间较大的一侧，或者默认为底部
-        # 如果空间都很大，优先选择底部（通常是运输巷）
-        if dist_top > dist_bottom + 50: # 只有当顶部空间显著更大时才选顶部
-            main_road_y = wf_max_y + 30
-            is_top = True
-        else:
-            main_road_y = wf_min_y - 30
-            is_top = False
+        area_bounds = rotated_area.bounds
+        area_min_y, area_max_y = area_bounds[1], area_bounds[3]
     else:
-        main_road_y = wf_min_y - 30
-        is_top = False
-    
-    # 主大巷起点和终点 (延伸一点)
-    main_start = Point(wf_min_x - 50, main_road_y)
-    main_end = Point(wf_max_x + 50, main_road_y)
-    
-    # 旋转回原始坐标系
+        area_min_y, area_max_y = wf_min_y - 100, wf_max_y + 100
+
+    # 确定主巷道位置
+    dist_bottom = wf_min_y - area_min_y
+    dist_top = area_max_y - wf_max_y
+
+    # 运输大巷放在下方（一般靠近井筒），回风大巷放在上方
+    transport_y = wf_min_y - 40
+    ventilation_y = wf_max_y + 40
+
+    # 如果空间不足，调整位置
+    if dist_bottom < 50:
+        transport_y = area_min_y + 10
+    if dist_top < 50:
+        ventilation_y = area_max_y - 10
+
+    # 1. 主运输大巷
+    main_start = Point(wf_min_x - 50, transport_y)
+    main_end = Point(wf_max_x + 50, transport_y)
     real_start = rotate(main_start, -rotation_angle, origin=centroid)
     real_end = rotate(main_end, -rotation_angle, origin=centroid)
-    
-    # 添加主大巷
+
     roadways.append({
         "id": "Main-Transport",
+        "name": "主运输大巷",
         "type": "main",
         "path": [
             {"x": real_start.x, "y": real_start.y},
@@ -239,28 +527,106 @@ def generate_roadways(workfaces: List[Dict], boundary_points: List[Dict], rotati
         ],
         "length": real_start.distance(real_end)
     })
-    
-    # 2. 生成联络巷 (Gate Roads)
-    # 从每个工作面中心垂直连接到主大巷
+
+    # 2. 回风大巷
+    vent_start = Point(wf_min_x - 50, ventilation_y)
+    vent_end = Point(wf_max_x + 50, ventilation_y)
+    real_vent_start = rotate(vent_start, -rotation_angle, origin=centroid)
+    real_vent_end = rotate(vent_end, -rotation_angle, origin=centroid)
+
+    roadways.append({
+        "id": "Main-Ventilation",
+        "name": "回风大巷",
+        "type": "ventilation",
+        "path": [
+            {"x": real_vent_start.x, "y": real_vent_start.y},
+            {"x": real_vent_end.x, "y": real_vent_end.y}
+        ],
+        "length": real_vent_start.distance(real_vent_end)
+    })
+
+    # 3. 为每个工作面生成双巷道（运输巷 + 回风巷）
     for i, wf in enumerate(rotated_centers):
-        # 起点：工作面中心
-        # 终点：主大巷上的投影点 (x, main_road_y)
-        
-        start_p = Point(wf['x'], wf['y'])
-        end_p = Point(wf['x'], main_road_y)
-        
-        # 旋转回原始坐标系
-        real_s = rotate(start_p, -rotation_angle, origin=centroid)
-        real_e = rotate(end_p, -rotation_angle, origin=centroid)
-        
+        wf_id = wf['id']
+        wf_x = wf['x']
+        wf_y = wf['y']
+        wf_half_len = wf['length'] / 2
+
+        # 运输巷：从工作面下边到主运输大巷
+        transport_road_start = Point(wf_x, wf_y - wf_half_len)
+        transport_road_end = Point(wf_x, transport_y)
+        real_ts = rotate(transport_road_start, -rotation_angle, origin=centroid)
+        real_te = rotate(transport_road_end, -rotation_angle, origin=centroid)
+
         roadways.append({
-            "id": f"Gate-{i+1}",
-            "type": "gate",
+            "id": f"Transport-{i + 1}",
+            "name": f"{wf_id}运输巷",
+            "type": "transport",
+            "workface": wf_id,
             "path": [
-                {"x": real_s.x, "y": real_s.y},
-                {"x": real_e.x, "y": real_e.y}
+                {"x": real_ts.x, "y": real_ts.y},
+                {"x": real_te.x, "y": real_te.y}
             ],
-            "length": start_p.distance(end_p)
+            "length": transport_road_start.distance(transport_road_end)
         })
-        
+
+        # 回风巷：从工作面上边到回风大巷
+        vent_road_start = Point(wf_x, wf_y + wf_half_len)
+        vent_road_end = Point(wf_x, ventilation_y)
+        real_vs = rotate(vent_road_start, -rotation_angle, origin=centroid)
+        real_ve = rotate(vent_road_end, -rotation_angle, origin=centroid)
+
+        roadways.append({
+            "id": f"Ventilation-{i + 1}",
+            "name": f"{wf_id}回风巷",
+            "type": "return",
+            "workface": wf_id,
+            "path": [
+                {"x": real_vs.x, "y": real_vs.y},
+                {"x": real_ve.x, "y": real_ve.y}
+            ],
+            "length": vent_road_start.distance(vent_road_end)
+        })
+
+    # 4. 开切眼（工作面端头的连接巷道）
+    # 简化处理：在工作面的推进起始端连接运输巷和回风巷
+    for i, wf in enumerate(rotated_centers):
+        wf_x = wf['x']
+        wf_half_width = wf['width'] / 2
+
+        # 开切眼在推进方向的起始端
+        cut_start_x = wf_x - wf_half_width
+        cut_y_bottom = wf['y'] - wf['length'] / 2
+        cut_y_top = wf['y'] + wf['length'] / 2
+
+        cut_start = Point(cut_start_x, cut_y_bottom)
+        cut_end = Point(cut_start_x, cut_y_top)
+        real_cs = rotate(cut_start, -rotation_angle, origin=centroid)
+        real_ce = rotate(cut_end, -rotation_angle, origin=centroid)
+
+        roadways.append({
+            "id": f"Cut-{i + 1}",
+            "name": f"{wf['id']}开切眼",
+            "type": "cut",
+            "workface": wf['id'],
+            "path": [
+                {"x": real_cs.x, "y": real_cs.y},
+                {"x": real_ce.x, "y": real_ce.y}
+            ],
+            "length": cut_start.distance(cut_end)
+        })
+
     return roadways
+
+
+# 保留旧函数签名以保持兼容性
+def generate_roadways(workfaces: List[Dict], boundary_points: List[Dict],
+                      rotation_angle: float = 0, centroid: Point = None,
+                      rotated_area: Polygon = None) -> List[Dict]:
+    """
+    旧版巷道生成函数 - 保持向后兼容
+    """
+    return generate_roadways_v2(
+        workfaces, boundary_points, rotation_angle, centroid, rotated_area,
+        DEFAULT_MINING_RULES
+    )

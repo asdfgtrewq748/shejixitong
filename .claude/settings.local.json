@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(cat:*)",
+      "Bash(xargs:*)",
+      "Bash(find:*)",
+      "Bash(python -c:*)",
+      "Bash(dir:*)",
+      "Bash(ls:*)",
+      "Bash(pip show:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
