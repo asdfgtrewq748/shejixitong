@@ -478,13 +478,19 @@ async def export_dxf():
                     ).set_placement((min_x + 20, info_y - i * 8))
 
         # 导出到内存流
-        stream = BytesIO()
-        doc.write(stream)
-        stream.seek(0)
+        # ezdxf write() 需要文本流，但 StreamingResponse 需要字节流
+        text_stream = StringIO()
+        doc.write(text_stream)
+        dxf_content = text_stream.getvalue()
+        text_stream.close()
+        
+        # 转换为字节流
+        byte_stream = BytesIO(dxf_content.encode('utf-8'))
+        byte_stream.seek(0)
 
         return StreamingResponse(
-            stream,
-            media_type="application/octet-stream",
+            byte_stream,
+            media_type="application/dxf",
             headers={
                 "Content-Disposition": "attachment; filename=mining_design.dxf",
                 "Access-Control-Expose-Headers": "Content-Disposition"

@@ -568,8 +568,8 @@ const GeoModelPreview = ({ data }) => {
           </div>
 
           {/* Controls */}
-          <div className="w-1/3 p-2 flex flex-col justify-start gap-3 bg-gray-900/20">
-            <div className="space-y-1">
+          <div className="w-1/3 p-2 flex flex-col justify-start gap-2 bg-gray-900/20 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+            <div className="space-y-1 shrink-0">
               <label className="text-[9px] text-gray-500 uppercase flex justify-between">
                 围岩透明度 <span className="text-blue-400">{opacity.toFixed(2)}</span>
               </label>
@@ -582,7 +582,7 @@ const GeoModelPreview = ({ data }) => {
               />
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between shrink-0">
               <label className="text-[9px] text-gray-500 uppercase">自动旋转</label>
               <button
                 onClick={() => setAutoRotate(!autoRotate)}
@@ -593,7 +593,7 @@ const GeoModelPreview = ({ data }) => {
             </div>
 
             {/* 图例 */}
-            <div className="mt-2 pt-2 border-t border-gray-700/30">
+            <div className="mt-1 pt-2 border-t border-gray-700/30 shrink-0">
               <div className="text-[8px] text-gray-500 uppercase mb-1">图例</div>
               <div className="space-y-1">
                 <div className="flex items-center gap-1 text-[9px]">
@@ -613,7 +613,7 @@ const GeoModelPreview = ({ data }) => {
 
             {/* 统计 */}
             {layerData && (
-              <div className="mt-1 pt-1 border-t border-gray-700/30 text-[9px] text-gray-500">
+              <div className="mt-auto pt-2 border-t border-gray-700/30 text-[9px] text-gray-500 shrink-0">
                 <div>总层数: {allLayers.length}</div>
                 {layerData.is_mock && <div className="text-amber-500">* 模拟数据</div>}
               </div>
