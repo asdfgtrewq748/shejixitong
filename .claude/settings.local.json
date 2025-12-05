@@ -8,7 +8,12 @@
       "Bash(python -c:*)",
       "Bash(dir:*)",
       "Bash(ls:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(git update-index:*)",
+      "Bash(git add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git push:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []
