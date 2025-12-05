@@ -9,7 +9,8 @@ router = APIRouter()
 
 @router.get("/")
 async def get_boreholes():
-    return {"boreholes": store.boreholes}
+    # 返回归一化后的钻孔坐标（与设计模块保持一致）
+    return {"boreholes": store.get_normalized_boreholes()}
 
 
 @router.get("/coal-seams")

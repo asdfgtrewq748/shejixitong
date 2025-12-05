@@ -13,7 +13,11 @@
       "Bash(git add:*)",
       "Bash(git fetch:*)",
       "Bash(git push:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(npm test:*)",
+      "Bash(node:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm start)"
     ],
     "deny": [],
     "ask": []

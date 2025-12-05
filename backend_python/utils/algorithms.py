@@ -92,6 +92,15 @@ def generate_smart_layout(
     # 2. 内缩边界（预留边界煤柱）
     mining_area = boundary_poly.buffer(-boundary_margin)
 
+    # 如果内缩后区域为空，尝试减小边界煤柱
+    if mining_area.is_empty:
+        print(f"警告：边界煤柱 {boundary_margin}m 过大导致可采区为空，尝试减半...")
+        mining_area = boundary_poly.buffer(-boundary_margin / 2)
+        
+    if mining_area.is_empty:
+        print("警告：可采区仍为空，使用原始边界...")
+        mining_area = boundary_poly
+
     # 处理 buffer 返回 MultiPolygon 的情况（复杂边界内缩可能产生多个独立区域）
     if mining_area.geom_type == 'MultiPolygon':
         # 选择面积最大的多边形作为主要可采区
@@ -485,189 +494,138 @@ def generate_roadways_v2(
         mining_rules: MiningRules
 ) -> List[Dict]:
     """
-    生成符合规程的巷道网络
-
-    正确的布置方式（参考示意图）：
-    - 大巷（运输大巷、回风大巷）：在采区左侧，垂直方向延伸
-    - 顺槽（运输顺槽、回风顺槽）：从大巷水平伸出，在每个工作面的上下两侧
-    - 工作面：水平方向是推进距离（长边），垂直方向是工作面长度（短边）
-    - 开切眼：在工作面右侧（推进终点），连接上下两条顺槽
-
-    布局示意：
-        回风大巷  运输大巷
-           │        │
-           │        ├────── 运输顺槽 ──────┐
-           │        │                      │
-           │        │      工作面-01       │ 开切眼
-           │        │                      │
-           │        ├────── 回风顺槽 ──────┘
-           │        │
-           │        ├────── 运输顺槽 ──────┐
-           │        │                      │
-           │        │      工作面-02       │ 开切眼
-           │        │                      │
-           │        ├────── 回风顺槽 ──────┘
-           │        │
-           ↓        ↓
+    生成符合规程的巷道网络 - 简化版本
+    
+    直接基于工作面的原始坐标生成巷道，不再做额外的坐标变换。
+    巷道沿工作面的边界布置。
     """
     if not workfaces:
         return []
 
-    # 安全检查：确保 centroid 存在
-    if centroid is None:
-        # 从工作面计算中心点
-        avg_x = sum(wf['center_x'] for wf in workfaces) / len(workfaces)
-        avg_y = sum(wf['center_y'] for wf in workfaces) / len(workfaces)
-        centroid = Point(avg_x, avg_y)
-
     roadways = []
-
-    # 将工作面中心点旋转到水平坐标系
-    rotated_centers = []
+    
+    # 使用工作面的原始坐标（已经在正确的坐标系中）
+    # 计算所有工作面的边界范围
+    all_points = []
     for wf in workfaces:
-        p = Point(wf['center_x'], wf['center_y'])
-        rp = rotate(p, rotation_angle, origin=centroid)
-        rotated_centers.append({
-            'x': rp.x,
-            'y': rp.y,
-            'id': wf['id'],
-            'width': wf.get('width', 200),    # 推进距离（水平方向，长边），提供默认值
-            'length': wf.get('length', 200)   # 工作面长度（垂直方向，短边），提供默认值
-        })
-
-    if not rotated_centers:
+        if wf.get('points'):
+            all_points.extend(wf['points'])
+    
+    if not all_points:
+        # 如果没有 points，使用 center 和尺寸估算
+        for wf in workfaces:
+            cx, cy = wf['center_x'], wf['center_y']
+            hw = wf.get('width', 200) / 2
+            hl = wf.get('length', 200) / 2
+            all_points.extend([
+                {'x': cx - hw, 'y': cy - hl},
+                {'x': cx + hw, 'y': cy + hl}
+            ])
+    
+    if not all_points:
         return []
-
+    
     # 工作面群的边界
-    # width是推进距离（x方向），length是工作面长度（y方向）
-    wf_min_x = min(p['x'] - p['width'] / 2 for p in rotated_centers)
-    wf_max_x = max(p['x'] + p['width'] / 2 for p in rotated_centers)
-    wf_min_y = min(p['y'] - p['length'] / 2 for p in rotated_centers)
-    wf_max_y = max(p['y'] + p['length'] / 2 for p in rotated_centers)
+    wf_min_x = min(p['x'] for p in all_points)
+    wf_max_x = max(p['x'] for p in all_points)
+    wf_min_y = min(p['y'] for p in all_points)
+    wf_max_y = max(p['y'] for p in all_points)
+    
+    # 大巷间距
+    main_road_spacing = 20
 
-    # 采区边界
-    if rotated_area:
-        area_bounds = rotated_area.bounds
-        area_min_x = area_bounds[0]
-    else:
-        area_min_x = wf_min_x - 100
+    # 大巷放在工作面左侧
+    transport_main_x = wf_min_x - 30
+    ventilation_main_x = transport_main_x - main_road_spacing
 
-    # 大巷间距（运输大巷和回风大巷之间的距离）
-    main_road_spacing = 15  # 两条大巷之间的间距
+    # 大巷的纵向范围
+    main_road_y_start = wf_min_y - 30
+    main_road_y_end = wf_max_y + 30
 
-    # 大巷放在左侧，垂直延伸
-    # 运输大巷在右（靠近工作面），回风大巷在左
-    main_x = wf_min_x - 30  # 大巷距离工作面左边界的距离
-    transport_main_x = main_x
-    ventilation_main_x = main_x - main_road_spacing
-
-    # 大巷的纵向范围：覆盖所有工作面，上下各延伸一些
-    main_road_y_start = wf_min_y - 50
-    main_road_y_end = wf_max_y + 50
-
-    # 1. 运输大巷（垂直方向，在左侧靠近工作面）
-    transport_start = Point(transport_main_x, main_road_y_start)
-    transport_end = Point(transport_main_x, main_road_y_end)
-    real_ts = rotate(transport_start, -rotation_angle, origin=centroid)
-    real_te = rotate(transport_end, -rotation_angle, origin=centroid)
-
+    # 1. 运输大巷
     roadways.append({
         "id": "Main-Transport",
         "name": "运输大巷",
         "type": "main",
         "path": [
-            {"x": real_ts.x, "y": real_ts.y},
-            {"x": real_te.x, "y": real_te.y}
+            {"x": transport_main_x, "y": main_road_y_start},
+            {"x": transport_main_x, "y": main_road_y_end}
         ],
-        "length": transport_start.distance(transport_end)
+        "length": main_road_y_end - main_road_y_start
     })
 
-    # 2. 回风大巷（垂直方向，在左侧更远处）
-    vent_start = Point(ventilation_main_x, main_road_y_start)
-    vent_end = Point(ventilation_main_x, main_road_y_end)
-    real_vs = rotate(vent_start, -rotation_angle, origin=centroid)
-    real_ve = rotate(vent_end, -rotation_angle, origin=centroid)
-
+    # 2. 回风大巷
     roadways.append({
         "id": "Main-Ventilation",
         "name": "回风大巷",
         "type": "ventilation",
         "path": [
-            {"x": real_vs.x, "y": real_vs.y},
-            {"x": real_ve.x, "y": real_ve.y}
+            {"x": ventilation_main_x, "y": main_road_y_start},
+            {"x": ventilation_main_x, "y": main_road_y_end}
         ],
-        "length": vent_start.distance(vent_end)
+        "length": main_road_y_end - main_road_y_start
     })
 
-    # 3. 为每个工作面生成顺槽（水平方向，在工作面上下两侧）
-    for i, wf in enumerate(rotated_centers):
+    # 3. 为每个工作面生成顺槽和开切眼
+    for i, wf in enumerate(workfaces):
         wf_id = wf['id']
-        wf_x = wf['x']
-        wf_y = wf['y']
-        wf_half_len = wf['length'] / 2
-        wf_half_width = wf['width'] / 2
+        
+        # 获取工作面边界
+        if wf.get('points') and len(wf['points']) >= 4:
+            pts = wf['points']
+            wf_xs = [p['x'] for p in pts]
+            wf_ys = [p['y'] for p in pts]
+            wf_left = min(wf_xs)
+            wf_right = max(wf_xs)
+            wf_bottom = min(wf_ys)
+            wf_top = max(wf_ys)
+        else:
+            # 使用中心点和尺寸
+            cx, cy = wf['center_x'], wf['center_y']
+            hw = wf.get('width', 200) / 2
+            hl = wf.get('length', 200) / 2
+            wf_left = cx - hw
+            wf_right = cx + hw
+            wf_bottom = cy - hl
+            wf_top = cy + hl
 
-        # 工作面的左边界（靠近大巷）和右边界
-        wf_left_x = wf_x - wf_half_width
-        wf_right_x = wf_x + wf_half_width
-
-        # 运输顺槽：在工作面上方，从运输大巷水平延伸到工作面右边界
-        # 位置：工作面上边界
-        transport_lane_y = wf_y + wf_half_len
-        transport_lane_start = Point(transport_main_x, transport_lane_y)
-        transport_lane_end = Point(wf_right_x, transport_lane_y)
-        real_tls = rotate(transport_lane_start, -rotation_angle, origin=centroid)
-        real_tle = rotate(transport_lane_end, -rotation_angle, origin=centroid)
-
+        # 运输顺槽：工作面上边界
         roadways.append({
             "id": f"Transport-Lane-{i + 1}",
             "name": f"{wf_id}运输顺槽",
             "type": "transport",
             "workface": wf_id,
             "path": [
-                {"x": real_tls.x, "y": real_tls.y},
-                {"x": real_tle.x, "y": real_tle.y}
+                {"x": transport_main_x, "y": wf_top},
+                {"x": wf_right, "y": wf_top}
             ],
-            "length": transport_lane_start.distance(transport_lane_end)
+            "length": wf_right - transport_main_x
         })
 
-        # 回风顺槽：在工作面下方，从运输大巷水平延伸到工作面右边界
-        # 位置：工作面下边界
-        return_lane_y = wf_y - wf_half_len
-        return_lane_start = Point(transport_main_x, return_lane_y)
-        return_lane_end = Point(wf_right_x, return_lane_y)
-        real_rls = rotate(return_lane_start, -rotation_angle, origin=centroid)
-        real_rle = rotate(return_lane_end, -rotation_angle, origin=centroid)
-
+        # 回风顺槽：工作面下边界
         roadways.append({
             "id": f"Return-Lane-{i + 1}",
             "name": f"{wf_id}回风顺槽",
             "type": "return",
             "workface": wf_id,
             "path": [
-                {"x": real_rls.x, "y": real_rls.y},
-                {"x": real_rle.x, "y": real_rle.y}
+                {"x": transport_main_x, "y": wf_bottom},
+                {"x": wf_right, "y": wf_bottom}
             ],
-            "length": return_lane_start.distance(return_lane_end)
+            "length": wf_right - transport_main_x
         })
 
-        # 4. 开切眼：在工作面右侧（推进终点），垂直连接运输顺槽和回风顺槽
-        cut_x = wf_right_x
-        cut_start = Point(cut_x, return_lane_y)
-        cut_end = Point(cut_x, transport_lane_y)
-        real_cs = rotate(cut_start, -rotation_angle, origin=centroid)
-        real_ce = rotate(cut_end, -rotation_angle, origin=centroid)
-
+        # 开切眼：工作面右侧
         roadways.append({
             "id": f"Cut-{i + 1}",
             "name": f"{wf_id}开切眼",
             "type": "cut",
             "workface": wf_id,
             "path": [
-                {"x": real_cs.x, "y": real_cs.y},
-                {"x": real_ce.x, "y": real_ce.y}
+                {"x": wf_right, "y": wf_bottom},
+                {"x": wf_right, "y": wf_top}
             ],
-            "length": cut_start.distance(cut_end)
+            "length": wf_top - wf_bottom
         })
 
     return roadways

@@ -92,6 +92,7 @@ const MiningDesignSystem = () => {
   const [showContours, setShowContours] = useState(true);
   const [showDesign, setShowDesign] = useState(true);
   const [displayDimension, setDisplayDimension] = useState('composite'); // safety | economic | env | composite
+  const [viewMode, setViewMode] = useState('design'); // 'design' | 'heatmap' - 视图模式
 
   // 画布交互状态
   const [scale, setScale] = useState(1);
@@ -139,8 +140,10 @@ const MiningDesignSystem = () => {
   useEffect(() => {
     if (boundary.length > 0 && !viewInitialized && canvasRef.current) {
       const canvas = canvasRef.current;
-      const canvasWidth = canvas.width || 900;
-      const canvasHeight = canvas.height || 700;
+      // 使用 getBoundingClientRect 获取 CSS 尺寸（不受 DPR 影响）
+      const rect = canvas.getBoundingClientRect();
+      const canvasWidth = rect.width || 900;
+      const canvasHeight = rect.height || 700;
       
       // 计算边界的范围
       const xs = boundary.map(p => p.x);
@@ -152,12 +155,12 @@ const MiningDesignSystem = () => {
       const dataWidth = maxX - minX;
       const dataHeight = maxY - minY;
       
-      // 计算缩放比例（留出更多边距，避免初始视图过大）
-      const scaleX = (canvasWidth * 0.5) / dataWidth;
-      const scaleY = (canvasHeight * 0.5) / dataHeight;
-      const newScale = Math.min(scaleX, scaleY, 1); // 不超过1倍
-      
-      // 计算平移偏移使数据居中
+      // 计算缩放比例（留出适当边距，让采区占据大部分画布）
+      const scaleX = (canvasWidth * 0.70) / dataWidth;  // 70% 画布宽度（确保可见）
+      const scaleY = (canvasHeight * 0.70) / dataHeight; // 70% 画布高度
+      const newScale = Math.min(scaleX, scaleY, 3); // 最大3倍，适应不同尺寸的采区
+
+      // 计算平移偏移使数据精确居中
       const centerX = (minX + maxX) / 2;
       const centerY = (minY + maxY) / 2;
       const offsetX = (canvasWidth / 2 / newScale) - centerX;
@@ -167,8 +170,9 @@ const MiningDesignSystem = () => {
       setPanOffset({ x: offsetX, y: offsetY });
       setViewInitialized(true);
       
-      console.log(`视图自动适配: scale=${newScale.toFixed(4)}, offset=(${offsetX.toFixed(0)}, ${offsetY.toFixed(0)})`);
-      console.log(`数据范围: X[${minX.toFixed(0)}-${maxX.toFixed(0)}], Y[${minY.toFixed(0)}-${maxY.toFixed(0)}]`);
+      console.log(`[视图适配] canvasSize=${canvasWidth.toFixed(0)}x${canvasHeight.toFixed(0)}, scale=${newScale.toFixed(4)}`);
+      console.log(`[视图适配] 数据范围: X[${minX.toFixed(0)}-${maxX.toFixed(0)}], Y[${minY.toFixed(0)}-${maxY.toFixed(0)}], size=${dataWidth.toFixed(0)}x${dataHeight.toFixed(0)}`);
+      console.log(`[视图适配] offset=(${offsetX.toFixed(0)}, ${offsetY.toFixed(0)})`);
       addLog(`视图已自动适配至采区范围`, 'success');
     }
   }, [boundary, viewInitialized]);
@@ -405,12 +409,12 @@ const MiningDesignSystem = () => {
       const dataWidth = maxX - minX;
       const dataHeight = maxY - minY;
       
-      // 计算缩放比例（留出更多边距，避免初始视图过大）
-      const scaleX = (canvasWidth * 0.5) / dataWidth;
-      const scaleY = (canvasHeight * 0.5) / dataHeight;
-      const newScale = Math.min(scaleX, scaleY); // 允许放大以适应屏幕
-      
-      // 计算平移偏移使数据居中
+      // 计算缩放比例（留出适当边距，让采区占据大部分画布）
+      const scaleX = (canvasWidth * 0.30) / dataWidth;  // 30% 画布宽度
+      const scaleY = (canvasHeight * 0.30) / dataHeight; // 30% 画布高度
+      const newScale = Math.min(scaleX, scaleY, 3); // 最大3倍，适应不同尺寸的采区
+
+      // 计算平移偏移使数据精确居中
       const centerX = (minX + maxX) / 2;
       const centerY = (minY + maxY) / 2;
       const offsetX = (canvasWidth / 2 / newScale) - centerX;
@@ -590,7 +594,15 @@ const MiningDesignSystem = () => {
         contours: scoreResult.contours,
         stats: scoreResult.stats
       });
-      setBoreholes(scoreResult.boreholes || []);
+      
+      // 更新边界和钻孔为归一化坐标（评分API现在也返回归一化数据）
+      if (scoreResult.boundary && scoreResult.boundary.length > 0) {
+        setBoundary(scoreResult.boundary);
+      }
+      if (scoreResult.boreholes && scoreResult.boreholes.length > 0) {
+        setBoreholes(scoreResult.boreholes);
+      }
+      
       addLog(`评分网格生成完成 (${Object.keys(scoreResult.grids || {}).length}个维度)`, 'success');
 
       // 2. 调用后端生成设计方案（传入规程参数）
@@ -638,13 +650,13 @@ const MiningDesignSystem = () => {
       setViewInitialized(false);
 
       // 显示设计结果统计
-      const panels = design.panels || [];
+      const workfaces = design.workfaces || design.panels || [];
       const roadways = design.roadways || [];
       const stats = design.stats || {};
 
       addLog(`======= 设计方案生成完成 =======`, 'success');
-      addLog(`工作面数量: ${panels.length}个`, 'info');
-      addLog(`  - 符合规程: ${stats.validCount || panels.length}个`, 'success');
+      addLog(`工作面数量: ${workfaces.length}个`, 'info');
+      addLog(`  - 符合规程: ${stats.validCount || workfaces.length}个`, 'success');
       if (stats.invalidCount > 0) {
         addLog(`  - 需调整: ${stats.invalidCount}个`, 'warning');
       }
@@ -766,26 +778,34 @@ const MiningDesignSystem = () => {
     ctx.moveTo(boundary[0].x, boundary[0].y)
     boundary.forEach(p => ctx.lineTo(p.x, p.y))
     ctx.closePath()
-    ctx.clip()
+    // ctx.clip() // 暂时禁用裁剪，防止设计元素因精度问题不可见
 
     // ====== 热力图渲染 ======
-    // 在 analysis 或 synthesis 阶段都显示热力图
-    if (showHeatmap && scoreData && scoreData.grids && (activeTab === 'analysis' || activeTab === 'synthesis')) {
+    // 在分析阶段始终显示，在综合阶段只有viewMode='heatmap'时显示
+    const shouldShowHeatmap = showHeatmap && scoreData && scoreData.grids && (
+      activeTab === 'analysis' ||
+      (activeTab === 'synthesis' && viewMode === 'heatmap')
+    );
+
+    if (shouldShowHeatmap) {
       const gridData = scoreData.grids[displayDimension]
-      
+
       if (gridData && gridData.data && gridData.data.length > 0) {
         const { data, minX, minY, stepX, stepY, resolution } = gridData
-        
-        ctx.globalAlpha = 0.7
+
+        // 在热力图模式下，透明度更高，更明显
+        ctx.globalAlpha = viewMode === 'heatmap' ? 0.9 : 0.7
         for (let i = 0; i < data.length; i++) {
           for (let j = 0; j < data[i].length; j++) {
             const score = data[i][j]
             if (score === null) continue
-            
+
             const x = minX + j * stepX
             const y = minY + i * stepY
-            
-            ctx.fillStyle = scoreToColor(score, 0.6)
+
+            // 热力图模式使用更强烈的颜色
+            const alpha = viewMode === 'heatmap' ? 0.8 : 0.6
+            ctx.fillStyle = scoreToColor(score, alpha)
             ctx.fillRect(x, y, stepX + 1, stepY + 1)
           }
         }
@@ -794,8 +814,13 @@ const MiningDesignSystem = () => {
     }
 
     // ====== 等值线渲染 ======
-    // 在 analysis 或 synthesis 阶段都显示等值线
-    if (showContours && scoreData && scoreData.contours && (activeTab === 'analysis' || activeTab === 'synthesis')) {
+    // 在分析阶段始终显示，在综合阶段只有viewMode='heatmap'时显示
+    const shouldShowContours = showContours && scoreData && scoreData.contours && (
+      activeTab === 'analysis' ||
+      (activeTab === 'synthesis' && viewMode === 'heatmap')
+    );
+
+    if (shouldShowContours) {
       const contourData = scoreData.contours[displayDimension]
       
       if (contourData && typeof contourData === 'object') {
@@ -837,7 +862,20 @@ const MiningDesignSystem = () => {
     // if (!scoreData && boreholes.length > 0) { ... }
 
     // ====== 智能设计渲染 (巷道和工作面) ======
+    // 只要有设计数据且在综合阶段，就显示（viewMode='design'时不显示热力图，viewMode='heatmap'时叠加热力图）
+    if (frameRef.current % 100 === 0) {
+      console.log('[渲染调试] showDesign:', showDesign, 'designData:', !!designData, 'activeTab:', activeTab);
+      if (designData) {
+        console.log('[渲染调试] roadways:', designData.roadways?.length, 'panels:', designData.panels?.length);
+        if (designData.panels && designData.panels.length > 0) {
+          const p = designData.panels[0];
+          console.log('[渲染调试] 第一个工作面:', p.id, 'points:', p.points?.length, 'x:', p.x?.toFixed(0), 'y:', p.y?.toFixed(0));
+        }
+      }
+    }
+
     if (showDesign && designData && activeTab === 'synthesis') {
+      console.log('[渲染调试] 开始渲染设计方案');
       ctx.globalCompositeOperation = 'source-over'
 
       // ====== 绘制巷道 (采用CAD双线表示法) ======
@@ -887,7 +925,7 @@ const MiningDesignSystem = () => {
       };
 
       // 绘制双线巷道
-      const drawDoubleLineRoadway = (path, width, color, isMain = false) => {
+      const drawDoubleLineRoadway = (path, width, color, isMain = false, isDashed = false) => {
         const halfWidth = width / 2;
         const { leftPoints, rightPoints } = calculateOffsetPoints(path, halfWidth);
 
@@ -906,10 +944,16 @@ const MiningDesignSystem = () => {
 
         // 绘制左边线
         ctx.strokeStyle = color;
-        ctx.lineWidth = isMain ? 2.5 / scale : 1.5 / scale;
+        ctx.lineWidth = isMain ? 2.5 / scale : (isDashed ? 2 / scale : 1.5 / scale);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.setLineDash([]);
+
+        // 设置虚线样式（回风巷道使用虚线）
+        if (isDashed) {
+          ctx.setLineDash([10/scale, 5/scale]);
+        } else {
+          ctx.setLineDash([]);
+        }
 
         if (isMain) {
           ctx.shadowBlur = 8;
@@ -928,6 +972,7 @@ const MiningDesignSystem = () => {
         ctx.stroke();
 
         ctx.shadowBlur = 0;
+        ctx.setLineDash([]); // 重置虚线
 
         // 绘制端部封闭线（可选，在交叉口处不封闭更好看）
         // ctx.beginPath();
@@ -939,21 +984,27 @@ const MiningDesignSystem = () => {
       roadways.forEach(road => {
         if (road.path && road.path.length > 1) {
           const roadType = road.type || '';
-          const isMain = roadType === 'main' || road.id?.startsWith('Main');
+          const isMain = roadType === 'main' || road.id?.startsWith('Main') || road.id?.startsWith('MR-');
           const isTransport = roadType === 'transport' || road.id?.startsWith('Transport');
           const isVentilation = roadType === 'ventilation' || roadType === 'return' || road.id?.startsWith('Ventilation');
           const isCut = roadType === 'cut' || road.id?.startsWith('Cut');
 
-          // 颜色和宽度配置（符合CAD规范）
-          let color, width;
+          // 调试输出
           if (isMain) {
-            color = '#00e5e5'; // 青色 - 主运输大巷
+            console.log('[主巷道]', road.id, road.type, '路径点数:', road.path.length);
+          }
+
+          // 颜色和宽度配置（符合CAD规范）
+          let color, width, isDashed = false;
+          if (isMain) {
+            color = '#00ffff'; // 明亮的青色 - 主运输大巷
             width = roadwayWidths.main;
           } else if (isVentilation) {
-            color = '#ff6b6b'; // 红色 - 回风巷道
+            color = '#ff9933'; // 橙色 - 回风巷道
             width = roadwayWidths.ventilation;
+            isDashed = true; // 回风巷道使用虚线
           } else if (isTransport) {
-            color = '#4ecdc4'; // 青绿色 - 运输巷
+            color = '#66ff66'; // 明绿色 - 运输顺槽
             width = roadwayWidths.transport;
           } else if (isCut) {
             color = '#45b7d1'; // 蓝色 - 开切眼
@@ -964,19 +1015,46 @@ const MiningDesignSystem = () => {
           }
 
           // 绘制双线巷道
-          drawDoubleLineRoadway(road.path, width, color, isMain);
+          drawDoubleLineRoadway(road.path, width, color, isMain, isDashed);
 
-          // 主大巷添加中心线（虚线，表示中轴）
+          // 主大巷添加加粗的中心线和箭头标识
           if (isMain) {
+            // 加粗中心线
             ctx.strokeStyle = color;
-            ctx.lineWidth = 1 / scale;
-            ctx.setLineDash([8/scale, 4/scale]);
+            ctx.lineWidth = 2.5 / scale;
+            ctx.setLineDash([12/scale, 6/scale]);
             ctx.lineDashOffset = -time * 2;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = color;
             ctx.beginPath();
             ctx.moveTo(road.path[0].x, road.path[0].y);
             road.path.forEach(p => ctx.lineTo(p.x, p.y));
             ctx.stroke();
             ctx.setLineDash([]);
+            ctx.shadowBlur = 0;
+
+            // 在主巷道上绘制箭头标记
+            const arrowInterval = Math.floor(road.path.length / 5);
+            for (let i = arrowInterval; i < road.path.length; i += arrowInterval) {
+              const p1 = road.path[i - 1];
+              const p2 = road.path[i];
+              const dx = p2.x - p1.x;
+              const dy = p2.y - p1.y;
+              const angle = Math.atan2(dy, dx);
+              const arrowSize = 8 / scale;
+
+              ctx.save();
+              ctx.translate(p2.x, p2.y);
+              ctx.rotate(angle);
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.moveTo(0, 0);
+              ctx.lineTo(-arrowSize, -arrowSize/2);
+              ctx.lineTo(-arrowSize, arrowSize/2);
+              ctx.closePath();
+              ctx.fill();
+              ctx.restore();
+            }
           }
 
           // 标签
@@ -1244,10 +1322,19 @@ const MiningDesignSystem = () => {
     ctx.restore() // 恢复裁剪
 
     // ====== 边界轮廓 ======
+    // 调试：每100帧打印一次边界信息
+    if (frameRef.current % 100 === 0) {
+      console.log(`[边界渲染] boundary.length=${boundary.length}, scale=${scale.toFixed(4)}, panOffset=(${panOffset.x.toFixed(0)}, ${panOffset.y.toFixed(0)})`);
+      if (boundary.length > 0) {
+        const xs = boundary.map(p => p.x);
+        const ys = boundary.map(p => p.y);
+        console.log(`[边界渲染] X范围: ${Math.min(...xs).toFixed(0)} - ${Math.max(...xs).toFixed(0)}, Y范围: ${Math.min(...ys).toFixed(0)} - ${Math.max(...ys).toFixed(0)}`);
+      }
+    }
     ctx.shadowBlur = 10
     ctx.shadowColor = '#0ea5e9'
     ctx.strokeStyle = '#0ea5e9'
-    ctx.lineWidth = 2
+    ctx.lineWidth = Math.max(2 / scale, 1)
     ctx.beginPath()
     ctx.moveTo(boundary[0].x, boundary[0].y)
     boundary.forEach(p => ctx.lineTo(p.x, p.y))
@@ -1374,10 +1461,9 @@ const MiningDesignSystem = () => {
 
       // 图例项 - 双线表示（符合CAD规范）
       const legendItems = [
-        { color: '#00e5e5', label: '主运输大巷', width: 5 },
-        { color: '#ff6b6b', label: '回风大巷', width: 4.5 },
-        { color: '#4ecdc4', label: '运输顺槽', width: 4 },
-        { color: '#ff6b6b', label: '回风顺槽', width: 4, dashed: true },
+        { color: '#00ffff', label: '主运输大巷', width: 5 },
+        { color: '#66ff66', label: '运输顺槽', width: 4 },
+        { color: '#ff9933', label: '回风顺槽', width: 4, dashed: true },
         { color: '#45b7d1', label: '开切眼', width: 6 },
         { color: '#e74c3c', label: '工作面', isWorkface: true }
       ]
@@ -1554,7 +1640,7 @@ const MiningDesignSystem = () => {
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(requestRef.current)
-  }, [boundary, boreholes, weights, activeTab, isLoading, scale, showGrid, panOffset, scoreData, designData, showHeatmap, showContours, showDesign, displayDimension, selectedBorehole, userEdits, tempRoadway, tempWorkface, isEditing, editMode, mousePos])
+  }, [boundary, boreholes, weights, activeTab, isLoading, scale, showGrid, panOffset, scoreData, designData, showHeatmap, showContours, showDesign, displayDimension, selectedBorehole, userEdits, tempRoadway, tempWorkface, isEditing, editMode, mousePos, viewMode, selectedWorkface])
   
   // 处理滚轮缩放（使用 useEffect 避免 passive listener 警告）
   useEffect(() => {
@@ -1692,8 +1778,8 @@ const MiningDesignSystem = () => {
                 <span className="text-sm text-gray-300">显示等值线</span>
               </label>
               <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={showDesign}
                   onChange={(e) => setShowDesign(e.target.checked)}
                   className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
@@ -1702,7 +1788,34 @@ const MiningDesignSystem = () => {
               </label>
             </div>
           </div>
-          
+
+          {/* 新增：视图模式切换 */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400 uppercase tracking-wider">视图模式</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setViewMode('design')}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  viewMode === 'design'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                设计方案
+              </button>
+              <button
+                onClick={() => setViewMode('heatmap')}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  viewMode === 'heatmap'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                评分热力图
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-xs text-gray-400 uppercase tracking-wider">分析维度</label>
             <select
