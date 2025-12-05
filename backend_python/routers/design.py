@@ -9,7 +9,7 @@ from utils.geology_analysis import GeologyAnalyzer
 import ezdxf
 from ezdxf import colors
 from ezdxf.enums import TextEntityAlignment
-from io import BytesIO, StringIO
+from io import BytesIO
 import traceback
 import math
 
@@ -240,8 +240,14 @@ async def export_dxf():
         # 设置图层
         setup_mining_layers(doc)
 
-        # 设置文字样式
-        doc.styles.add('MINING', font='simhei.ttf')  # 黑体
+        # 设置文字样式 - 带fallback
+        try:
+            doc.styles.add('MINING', font='simhei.ttf')  # 优先使用黑体
+        except Exception:
+            try:
+                doc.styles.add('MINING', font='arial.ttf')  # fallback到Arial
+            except Exception:
+                pass  # 使用默认字体
 
         # ========== 绘制采区边界 ==========
         if store.boundary:
@@ -524,22 +530,21 @@ async def export_dxf():
                         dxfattribs={'layer': '文字标注', 'height': 4}
                     ).set_placement((min_x + 20, info_y - i * 8))
 
-        # 导出到内存流
-        # ezdxf write() 需要文本流，但 StreamingResponse 需要字节流
-        text_stream = StringIO()
-        doc.write(text_stream)
-        dxf_content = text_stream.getvalue()
-        text_stream.close()
-        
-        # 转换为字节流
-        byte_stream = BytesIO(dxf_content.encode('utf-8'))
+        # 导出到字节流 - 使用正确的编码方式
+        from datetime import datetime
+        byte_stream = BytesIO()
+        doc.write(byte_stream, fmt='asc')  # ASCII格式，兼容性更好
         byte_stream.seek(0)
+
+        # 生成带时间戳的文件名
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"mining_design_{timestamp}.dxf"
 
         return StreamingResponse(
             byte_stream,
             media_type="application/dxf",
             headers={
-                "Content-Disposition": "attachment; filename=mining_design.dxf",
+                "Content-Disposition": f"attachment; filename={filename}",
                 "Access-Control-Expose-Headers": "Content-Disposition"
             }
         )
