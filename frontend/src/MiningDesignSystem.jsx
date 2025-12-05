@@ -981,6 +981,14 @@ const MiningDesignSystem = () => {
         // ctx.stroke();
       };
 
+      // 调试：打印所有巷道信息
+      if (frameRef.current % 100 === 0) {
+        console.log('[巷道调试] 总数:', roadways.length);
+        roadways.forEach((r, i) => {
+          console.log(`[巷道${i}] id:${r.id} type:${r.type} path:${r.path?.length} points:`, r.path);
+        });
+      }
+
       roadways.forEach(road => {
         if (road.path && road.path.length > 1) {
           const roadType = road.type || '';
@@ -1033,9 +1041,9 @@ const MiningDesignSystem = () => {
             ctx.setLineDash([]);
             ctx.shadowBlur = 0;
 
-            // 在主巷道上绘制箭头标记
-            const arrowInterval = Math.floor(road.path.length / 5);
-            for (let i = arrowInterval; i < road.path.length; i += arrowInterval) {
+            // 在主巷道上绘制箭头标记（只有路径点数大于2时才绘制多个箭头）
+            const arrowInterval = Math.max(1, Math.floor(road.path.length / 5));
+            for (let i = arrowInterval; i < road.path.length && arrowInterval > 0; i += arrowInterval) {
               const p1 = road.path[i - 1];
               const p2 = road.path[i];
               const dx = p2.x - p1.x;
@@ -1128,6 +1136,13 @@ const MiningDesignSystem = () => {
 
       // ====== 绘制工作面 (采用CAD规范) ======
       const workfaceList = designData.panels || designData.workfaces || [];
+      // 调试：打印工作面数据
+      if (frameRef.current % 100 === 0) {
+        console.log('[工作面调试] 总数:', workfaceList.length);
+        workfaceList.forEach((wf, i) => {
+          console.log(`[工作面${i}] id:${wf.id} center:(${wf.center_x?.toFixed(0)}, ${wf.center_y?.toFixed(0)}) points:${wf.points?.length}`);
+        });
+      }
       if (workfaceList.length > 0) {
         workfaceList.forEach((face, idx) => {
           const { x, y, width: w, length: h, avgScore, isValid, validationMsg } = face
@@ -1168,6 +1183,11 @@ const MiningDesignSystem = () => {
             // 添加斜线填充图案（CAD规范：已规划工作面用斜线表示）
             if (!isSelected) {
               ctx.save();
+              // 重新创建工作面路径用于裁剪
+              ctx.beginPath();
+              ctx.moveTo(face.points[0].x, face.points[0].y);
+              face.points.forEach(p => ctx.lineTo(p.x, p.y));
+              ctx.closePath();
               ctx.clip(); // 裁剪到工作面区域内
 
               // 计算工作面边界
@@ -1179,7 +1199,7 @@ const MiningDesignSystem = () => {
               // 绘制斜线填充
               ctx.strokeStyle = isInvalid ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.25)';
               ctx.lineWidth = 0.8 / scale;
-              const spacing = 12 / scale; // 斜线间距
+              const spacing = Math.max(1, 12 / scale); // 斜线间距，确保最小为1避免无限循环
 
               for (let i = minX - (maxY - minY); i < maxX + (maxY - minY); i += spacing) {
                 ctx.beginPath();
@@ -1272,7 +1292,7 @@ const MiningDesignSystem = () => {
 
               ctx.strokeStyle = isInvalid ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.25)';
               ctx.lineWidth = 0.8 / scale;
-              const spacing = 12 / scale;
+              const spacing = Math.max(1, 12 / scale); // 确保最小为1避免无限循环
 
               for (let i = x - h; i < x + w + h; i += spacing) {
                 ctx.beginPath();
