@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Response, Body
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, validator
+from typing import Dict, Any, Optional, List
 from store import store
 from utils.algorithms import generate_smart_layout, generate_roadways
 from utils.mining_rules import MiningRules, DEFAULT_MINING_RULES
@@ -8,11 +10,56 @@ import ezdxf
 from ezdxf import colors
 from ezdxf.enums import TextEntityAlignment
 from io import BytesIO, StringIO
-from typing import Dict, Any
 import traceback
 import math
 
 router = APIRouter()
+
+
+# ============ 输入验证模型 ============
+
+class FaceLengthConfig(BaseModel):
+    min: float = Field(150, ge=80, le=400, description="最小工作面长度(m)")
+    max: float = Field(300, ge=100, le=500, description="最大工作面长度(m)")
+    preferred: Optional[float] = None
+
+    @validator('max')
+    def max_must_be_greater_than_min(cls, v, values):
+        if 'min' in values and v < values['min']:
+            raise ValueError('最大长度必须大于最小长度')
+        return v
+
+
+class MiningRulesConfig(BaseModel):
+    faceLength: Optional[FaceLengthConfig] = None
+    layoutDirection: str = Field('strike', pattern='^(strike|dip)$')
+
+
+class DesignParams(BaseModel):
+    faceWidth: float = Field(200.0, ge=50, le=1000, description="推进长度(m)")
+    pillarWidth: float = Field(20.0, ge=5, le=100, description="区段煤柱宽度(m)")
+    boundaryMargin: float = Field(30.0, ge=5, le=100, description="边界煤柱宽度(m)")
+    dipAngle: float = Field(0, ge=0, le=45, description="煤层倾角(度)")
+    dipDirection: float = Field(0, ge=0, le=360, description="煤层倾向(度)")
+    miningRules: Optional[MiningRulesConfig] = None
+    userEdits: Optional[Dict[str, Any]] = None
+    targetSeam: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "faceWidth": 200,
+                "pillarWidth": 20,
+                "boundaryMargin": 30,
+                "miningRules": {
+                    "faceLength": {"min": 150, "max": 300},
+                    "layoutDirection": "strike"
+                }
+            }
+        }
+
+
+# ============ 图层设置 ============
 
 
 def setup_mining_layers(doc):
@@ -506,7 +553,8 @@ async def export_dxf():
 
 
 @router.post("/")
-async def generate_design(params: Dict[str, Any] = Body(...)):
+async def generate_design(params: DesignParams):
+    """生成采矿设计方案"""
     if not store.boundary:
         raise HTTPException(status_code=400, detail="缺少边界数据")
 
@@ -514,50 +562,32 @@ async def generate_design(params: Dict[str, Any] = Body(...)):
     normalized_boundary = store.get_normalized_boundary()
     normalized_boreholes = store.get_normalized_boreholes()
 
-    # 获取基本参数
-    face_width = params.get("faceWidth", 200.0)
-    pillar_width = params.get("pillarWidth", 20.0)
-    boundary_margin = params.get("boundaryMargin", 30.0)
-    user_edits = params.get("userEdits", {})
+    # 从验证后的参数获取值
+    face_width = params.faceWidth
+    pillar_width = params.pillarWidth
+    boundary_margin = params.boundaryMargin
+    user_edits = params.userEdits or {}
     manual_roadways = user_edits.get("roadways", [])
-
-    # 获取规程参数
-    rules_params = params.get("miningRules", {})
 
     # 构建规程配置
     mining_rules = MiningRules()
 
     # 工作面长度约束
-    if 'faceLength' in rules_params:
-        fl = rules_params['faceLength']
-        mining_rules.face_length_min = fl.get('min', mining_rules.face_length_min)
-        mining_rules.face_length_max = fl.get('max', mining_rules.face_length_max)
-        mining_rules.face_length_preferred = fl.get('preferred', mining_rules.face_length_preferred)
-
-    # 推进长度约束
-    if 'advanceLength' in rules_params:
-        al = rules_params['advanceLength']
-        mining_rules.advance_length_min = al.get('min', mining_rules.advance_length_min)
-        mining_rules.advance_length_max = al.get('max', mining_rules.advance_length_max)
-        mining_rules.advance_length_preferred = al.get('preferred', mining_rules.advance_length_preferred)
-
-    # 煤柱约束
-    if 'sectionPillar' in rules_params:
-        sp = rules_params['sectionPillar']
-        mining_rules.section_pillar_preferred = sp.get('preferred', mining_rules.section_pillar_preferred)
-
-    if 'boundaryPillar' in rules_params:
-        bp = rules_params['boundaryPillar']
-        boundary_margin = bp.get('preferred', boundary_margin)
+    if params.miningRules and params.miningRules.faceLength:
+        fl = params.miningRules.faceLength
+        mining_rules.face_length_min = fl.min
+        mining_rules.face_length_max = fl.max
+        if fl.preferred:
+            mining_rules.face_length_preferred = fl.preferred
 
     # 布置方向
-    if 'layoutDirection' in rules_params:
-        mining_rules.layout_direction = rules_params['layoutDirection']
+    if params.miningRules:
+        mining_rules.layout_direction = params.miningRules.layoutDirection
 
-    # 获取煤层倾角（可能从前端传入，或从地质数据计算）
-    dip_angle = params.get("dipAngle", 0)
-    dip_direction = params.get("dipDirection", 0)
-    target_seam = params.get("targetSeam", None)
+    # 获取煤层倾角
+    dip_angle = params.dipAngle
+    dip_direction = params.dipDirection
+    target_seam = params.targetSeam
 
     # 如果有钻孔地质数据，创建地质分析器
     geology_analyzer = None

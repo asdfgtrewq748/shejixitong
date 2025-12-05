@@ -1,18 +1,21 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import os
 
 from routers import upload, boreholes, design, score, boundary, geology
 
 app = FastAPI(title="Mining Design System API", version="2.0")
 
-# 配置 CORS
+# 配置 CORS - 从环境变量读取允许的域名，默认为本地开发地址
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允许所有来源，生产环境请限制为前端地址
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # 注册路由
