@@ -7,38 +7,14 @@ import {
 } from 'lucide-react';
 import * as api from './api';
 import FileUploader from './FileUploader';
-import GeoModelPreview from './components/GeoModelPreview';
-
-const GlobalStyles = () => (
-  <style>{`
-    @keyframes scanline {
-      0% { transform: translateY(-100%); }
-      100% { transform: translateY(100%); }
-    }
-    @keyframes grid-move {
-      0% { background-position: 0 0; }
-      100% { background-position: 50px 50px; }
-    }
-    .bg-cyber-grid {
-      background-image: linear-gradient(rgba(30, 58, 138, 0.1) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(30, 58, 138, 0.1) 1px, transparent 1px);
-      background-size: 30px 30px;
-    }
-    .glass-panel {
-      background: rgba(17, 24, 39, 0.7);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
-    }
-    .neon-border {
-      box-shadow: 0 0 5px rgba(59, 130, 246, 0.5), inset 0 0 10px rgba(59, 130, 246, 0.1);
-    }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #475569; }
-  `}</style>
-);
+import {
+  GlobalStyles,
+  AppHeader,
+  SettingsPanel,
+  LogPanel,
+  CanvasToolbar,
+  GeoModelPreview
+} from './components';
 
 const MINING_BOUNDARY = [
   { x: 100, y: 100 }, { x: 700, y: 80 }, { x: 750, y: 500 },
@@ -1702,319 +1678,68 @@ const MiningDesignSystem = () => {
     canvas.addEventListener('wheel', handleWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', handleWheel);
   }, []);
-  
+
+  // DXF导出处理函数
+  const handleExportDXF = async () => {
+    try {
+      addLog('正在导出 DXF 设计图纸...', 'loading');
+      await api.exportDesignDXF();
+      addLog('DXF 导出成功', 'success');
+    } catch (e) {
+      addLog('DXF 导出失败: ' + e.message, 'warning');
+    }
+  };
+
+  // 重置所有数据处理函数
+  const handleResetAll = () => {
+    setBoundary([]);
+    setBoreholes([]);
+    setScoreData(null);
+    setDesignData(null);
+    setActiveTab('import');
+    setSystemLog([]);
+    addLog('系统已重置', 'warning');
+    setSettingsOpen(false);
+  };
+
   return (
   <div className="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans overflow-hidden bg-cyber-grid selection:bg-blue-500/30">
     <GlobalStyles />
-      
-    <header className="glass-panel z-50 flex items-center justify-between px-6 py-3 mx-4 mt-4 rounded-xl">
-    <div className="flex items-center gap-4">
-      <div className="relative group">
-      <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg blur opacity-40 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
-      <div className="relative p-2 bg-gray-900 rounded-lg border border-gray-700">
-        <Cpu className="w-6 h-6 text-blue-400 animate-pulse" />
-      </div>
-      </div>
-      <div>
-      <h1 className="text-2xl font-black tracking-widest text-white uppercase" style={{ textShadow: '0 0 10px rgba(59, 130, 246, 0.5)' }}>
-        GeoMind <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">智能采矿设计系统</span>
-      </h1>
-      <div className="flex items-center gap-2 text-[10px] text-gray-400 tracking-wider">
-        <span className="w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
-        系统在线 // V5.0.1
-      </div>
-      </div>
-    </div>
-        
-    <div className="flex bg-gray-900/50 p-1 rounded-full border border-gray-700 backdrop-blur-sm">
-      {['import', 'analysis', 'synthesis'].map((step, idx) => {
-        const isActive = activeTab === step;
-        const labels = { import: '数据源', analysis: '地质算力', synthesis: '工程决策' };
-        const icons = { import: Upload, analysis: Activity, synthesis: MapIcon };
-        const Icon = icons[step];
-                
-        return (
-          <button 
-            key={step}
-            onClick={() => !isLoading && setActiveTab(step)}
-            className={`
-              relative flex items-center gap-2 px-6 py-2 rounded-full text-xs font-bold transition-all duration-300
-              ${isActive ? 'text-white bg-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'text-gray-500 hover:text-gray-300'}
-            `}
-          >
-            <Icon size={14} />
-            {labels[step]}
-          </button>
-        );
-      })}
-    </div>
 
-    <div className="flex gap-3">
-      <button 
-        onClick={() => setSettingsOpen(!settingsOpen)}
-        className={`p-2.5 hover:bg-white/10 rounded-lg transition-colors border hover:border-gray-600 ${settingsOpen ? 'text-blue-400 border-blue-500/50' : 'text-gray-400 border-transparent'}`}
-      >
-        <Settings size={18} />
-      </button>
-      <button 
-        onClick={handleExportReport}
-        className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-emerald-900/20 border border-emerald-400/20 transition-all hover:scale-105"
-      >
-        <Save size={14} /> 导出报告
-      </button>
-      <button 
-        onClick={async () => {
-          try {
-            addLog('正在导出 DXF 设计图纸...', 'loading');
-            await api.exportDesignDXF();
-            addLog('DXF 导出成功', 'success');
-          } catch (e) {
-            addLog('DXF 导出失败: ' + e.message, 'warning');
-          }
-        }}
-        disabled={!designData}
-        className={`flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-blue-900/20 border border-blue-400/20 transition-all hover:scale-105 ${!designData ? 'opacity-50 cursor-not-allowed' : ''}`}
-      >
-        <FolderOpen size={14} /> 导出 DXF
-      </button>
-    </div>
-    </header>
+    <AppHeader
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      isLoading={isLoading}
+      settingsOpen={settingsOpen}
+      setSettingsOpen={setSettingsOpen}
+      onExportReport={handleExportReport}
+      onExportDXF={handleExportDXF}
+      designData={designData}
+    />
 
     {/* 设置面板 */}
     {settingsOpen && (
-      <div className="absolute top-20 right-8 z-50 glass-panel rounded-xl p-5 w-80 shadow-2xl border border-gray-700 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <Settings size={16} className="text-blue-400" /> 系统设置
-          </h3>
-          <button onClick={() => setSettingsOpen(false)} className="text-gray-400 hover:text-white">
-            <span className="text-lg">&times;</span>
-          </button>
-        </div>
-        
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-xs text-gray-400 uppercase tracking-wider">显示选项</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={showGrid}
-                  onChange={(e) => setShowGrid(e.target.checked)}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-300">显示网格</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={showHeatmap}
-                  onChange={(e) => setShowHeatmap(e.target.checked)}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-300">显示热力图</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={showContours}
-                  onChange={(e) => setShowContours(e.target.checked)}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-300">显示等值线</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showDesign}
-                  onChange={(e) => setShowDesign(e.target.checked)}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-300">显示设计方案</span>
-              </label>
-            </div>
-          </div>
-
-          {/* 新增：视图模式切换 */}
-          <div className="space-y-2">
-            <label className="text-xs text-gray-400 uppercase tracking-wider">视图模式</label>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setViewMode('design')}
-                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  viewMode === 'design'
-                    ? 'bg-blue-600 text-white shadow-lg'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                设计方案
-              </button>
-              <button
-                onClick={() => setViewMode('heatmap')}
-                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  viewMode === 'heatmap'
-                    ? 'bg-blue-600 text-white shadow-lg'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                评分热力图
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs text-gray-400 uppercase tracking-wider">分析维度</label>
-            <select
-              value={displayDimension}
-              onChange={(e) => setDisplayDimension(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="composite">综合评分</option>
-              <option value="safety">安全性评分</option>
-              <option value="economic">经济性评分</option>
-              <option value="env">环保性评分</option>
-            </select>
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-xs text-gray-400 uppercase tracking-wider">采矿规程参数</label>
-
-            {/* 工作面长度范围 */}
-            <div className="space-y-1">
-              <label className="text-[10px] text-gray-500">工作面长度范围 (m)</label>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <input
-                    type="number"
-                    value={designParams.faceLengthMin}
-                    onChange={(e) => setDesignParams({...designParams, faceLengthMin: parseFloat(e.target.value) || 150})}
-                    className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                    placeholder="最小"
-                  />
-                </div>
-                <div>
-                  <input
-                    type="number"
-                    value={designParams.faceLengthMax}
-                    onChange={(e) => setDesignParams({...designParams, faceLengthMax: parseFloat(e.target.value) || 300})}
-                    className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                    placeholder="最大"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* 推进长度和煤柱宽度 */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-gray-500">推进长度 (m)</label>
-                <input
-                  type="number"
-                  value={designParams.faceWidth}
-                  onChange={(e) => setDesignParams({...designParams, faceWidth: parseFloat(e.target.value) || 200})}
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-gray-500">区段煤柱 (m)</label>
-                <input
-                  type="number"
-                  value={designParams.pillarWidth}
-                  onChange={(e) => setDesignParams({...designParams, pillarWidth: parseFloat(e.target.value) || 20})}
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                />
-              </div>
-            </div>
-
-            {/* 边界煤柱 */}
-            <div>
-              <label className="text-[10px] text-gray-500">边界煤柱宽度 (m)</label>
-              <input
-                type="number"
-                value={designParams.boundaryMargin}
-                onChange={(e) => setDesignParams({...designParams, boundaryMargin: parseFloat(e.target.value) || 30})}
-                className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-              />
-            </div>
-
-            {/* 布置方向 */}
-            <div>
-              <label className="text-[10px] text-gray-500">布置方向</label>
-              <select
-                value={designParams.layoutDirection}
-                onChange={(e) => setDesignParams({...designParams, layoutDirection: e.target.value})}
-                className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-              >
-                <option value="strike">走向长壁</option>
-                <option value="dip">倾向长壁</option>
-              </select>
-            </div>
-
-            {/* 煤层倾角 */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-gray-500">煤层倾角 (°)</label>
-                <input
-                  type="number"
-                  value={designParams.dipAngle}
-                  onChange={(e) => setDesignParams({...designParams, dipAngle: parseFloat(e.target.value) || 0})}
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                  min="0" max="45" step="1"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-gray-500">煤层倾向 (°)</label>
-                <input
-                  type="number"
-                  value={designParams.dipDirection}
-                  onChange={(e) => setDesignParams({...designParams, dipDirection: parseFloat(e.target.value) || 0})}
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                  min="0" max="360" step="1"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs text-gray-400 uppercase tracking-wider">缩放级别</label>
-            <div className="flex items-center gap-3">
-              <input 
-                type="range" 
-                min="25" 
-                max="400" 
-                value={scale * 100}
-                onChange={(e) => setScale(parseInt(e.target.value) / 100)}
-                className="flex-1"
-              />
-              <span className="text-sm text-white font-mono w-12">{(scale * 100).toFixed(0)}%</span>
-            </div>
-          </div>
-          
-          <div className="pt-3 border-t border-gray-700 space-y-2">
-            <button 
-              onClick={handleResetView}
-              className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
-            >
-              重置视图
-            </button>
-            <button 
-              onClick={() => {
-                setBoundary([]);
-                setBoreholes([]);
-                setScoreData(null);
-                setDesignData(null);
-                setActiveTab('import');
-                setSystemLog([]);
-                addLog('系统已重置', 'warning');
-                setSettingsOpen(false);
-              }}
-              className="w-full py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 text-sm rounded-lg transition-colors border border-red-800/50"
-            >
-              重置所有数据
-            </button>
-          </div>
-        </div>
-      </div>
+      <SettingsPanel
+        onClose={() => setSettingsOpen(false)}
+        showGrid={showGrid}
+        setShowGrid={setShowGrid}
+        showHeatmap={showHeatmap}
+        setShowHeatmap={setShowHeatmap}
+        showContours={showContours}
+        setShowContours={setShowContours}
+        showDesign={showDesign}
+        setShowDesign={setShowDesign}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        displayDimension={displayDimension}
+        setDisplayDimension={setDisplayDimension}
+        designParams={designParams}
+        setDesignParams={setDesignParams}
+        scale={scale}
+        setScale={setScale}
+        onResetView={handleResetView}
+        onResetAll={handleResetAll}
+      />
     )}
 
     <main className="flex flex-1 overflow-hidden p-4 gap-4">
