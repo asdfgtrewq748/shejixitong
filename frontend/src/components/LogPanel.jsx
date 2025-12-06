@@ -1,56 +1,36 @@
 import React from 'react';
-import { Terminal, AlertCircle, CheckCircle, Zap } from 'lucide-react';
+import { Terminal } from 'lucide-react';
 
 /**
  * 日志面板组件 - 显示系统操作日志
  */
 const LogPanel = ({ logs = [] }) => {
-  const getLogIcon = (type) => {
-    switch (type) {
-      case 'success':
-        return <CheckCircle size={12} className="text-green-400" />;
-      case 'warning':
-        return <AlertCircle size={12} className="text-yellow-400" />;
-      case 'loading':
-        return <Zap size={12} className="text-blue-400 animate-pulse" />;
-      default:
-        return <Terminal size={12} className="text-gray-400" />;
-    }
-  };
-
-  const getLogStyle = (type) => {
-    switch (type) {
-      case 'success':
-        return 'text-green-300';
-      case 'warning':
-        return 'text-yellow-300';
-      case 'loading':
-        return 'text-blue-300';
-      default:
-        return 'text-gray-400';
-    }
+  const colors = {
+    info: 'text-gray-300 border-gray-600',
+    success: 'text-green-400 border-green-600',
+    warning: 'text-amber-400 border-amber-600',
+    loading: 'text-blue-300 border-blue-600'
   };
 
   return (
-    <div className="glass-panel rounded-xl p-3 h-36 overflow-hidden flex flex-col">
-      <div className="flex items-center gap-2 pb-2 border-b border-gray-700/50">
-        <Terminal size={12} className="text-green-400" />
-        <span className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">系统日志</span>
+    <div className="h-40 border-t border-gray-700/50 flex flex-col bg-black/20">
+      <div className="px-4 py-2 border-b border-gray-700/30 bg-gray-900/30">
+        <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+          <Terminal size={10} /> 后端日志
+        </h3>
       </div>
-      <div className="flex-1 overflow-y-auto space-y-1 py-2 font-mono text-[11px]">
-        {logs.length === 0 ? (
-          <div className="text-gray-500 text-center py-4">暂无日志</div>
-        ) : (
-          logs.map((log, i) => {
-            const [content, type] = log.split('|');
-            return (
-              <div key={i} className={`flex items-start gap-2 ${getLogStyle(type)}`}>
-                {getLogIcon(type)}
-                <span className="flex-1 break-all">{content}</span>
-              </div>
-            );
-          })
-        )}
+      <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-[10px] scroll-smooth">
+        {logs.length === 0 && <span className="text-gray-600 animate-pulse">_ 等待输入...</span>}
+        {logs.map((log, index) => {
+          const [text, type] = log.split('|');
+          const timeMatch = text.match(/^\[(.*?)\]/);
+          return (
+            <div key={index} className={`border-l-2 pl-2 py-1 mb-1 animate-[fadeIn_0.2s_ease-out] ${colors[type] || colors.info}`}>
+              {timeMatch && <span className="opacity-50 mr-2">{timeMatch[0]}</span>}
+              <span>{text.replace(/^\[.*?\]\s/, '')}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
