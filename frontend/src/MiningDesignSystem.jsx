@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Layers, Upload, Database, Activity, ShieldCheck, DollarSign, Leaf, Cpu,
   Map as MapIcon, Settings, ChevronRight, Play, Save, FileText,
@@ -693,7 +693,19 @@ const MiningDesignSystem = () => {
     }
   };
 
-  const animate = () => {
+  // 帧率控制 - 限制最大60fps以节省资源
+  const lastFrameTimeRef = useRef(0);
+  const targetFPS = 60;
+  const frameInterval = 1000 / targetFPS;
+
+  const animate = (timestamp) => {
+    // 帧率限制
+    if (timestamp - lastFrameTimeRef.current < frameInterval) {
+      requestRef.current = requestAnimationFrame(animate);
+      return;
+    }
+    lastFrameTimeRef.current = timestamp;
+
     if (!canvasRef.current) return
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
@@ -1196,16 +1208,19 @@ const MiningDesignSystem = () => {
               const minY = Math.min(...face.points.map(p => p.y));
               const maxY = Math.max(...face.points.map(p => p.y));
 
-              // 绘制斜线填充
+              // 绘制斜线填充（带安全边界保护）
               ctx.strokeStyle = isInvalid ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.25)';
               ctx.lineWidth = 0.8 / scale;
               const spacing = Math.max(1, 12 / scale); // 斜线间距，确保最小为1避免无限循环
+              const maxIterations = 10000; // 安全迭代上限
+              let iterations = 0;
 
-              for (let i = minX - (maxY - minY); i < maxX + (maxY - minY); i += spacing) {
+              for (let i = minX - (maxY - minY); i < maxX + (maxY - minY) && iterations < maxIterations; i += spacing) {
                 ctx.beginPath();
                 ctx.moveTo(i, minY);
                 ctx.lineTo(i + (maxY - minY), maxY);
                 ctx.stroke();
+                iterations++;
               }
 
               ctx.restore();
@@ -1293,12 +1308,15 @@ const MiningDesignSystem = () => {
               ctx.strokeStyle = isInvalid ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.25)';
               ctx.lineWidth = 0.8 / scale;
               const spacing = Math.max(1, 12 / scale); // 确保最小为1避免无限循环
+              const maxIterations = 10000; // 安全迭代上限
+              let iterations = 0;
 
-              for (let i = x - h; i < x + w + h; i += spacing) {
+              for (let i = x - h; i < x + w + h && iterations < maxIterations; i += spacing) {
                 ctx.beginPath();
                 ctx.moveTo(i, y);
                 ctx.lineTo(i + h, y + h);
                 ctx.stroke();
+                iterations++;
               }
               ctx.restore();
             }
@@ -1658,8 +1676,16 @@ const MiningDesignSystem = () => {
   }
 
   useEffect(() => {
-    requestRef.current = requestAnimationFrame(animate)
-    return () => cancelAnimationFrame(requestRef.current)
+    // 使用requestAnimationFrame启动动画循环
+    const startAnimation = () => {
+      requestRef.current = requestAnimationFrame(animate);
+    };
+    startAnimation();
+    return () => {
+      if (requestRef.current) {
+        cancelAnimationFrame(requestRef.current);
+      }
+    };
   }, [boundary, boreholes, weights, activeTab, isLoading, scale, showGrid, panOffset, scoreData, designData, showHeatmap, showContours, showDesign, displayDimension, selectedBorehole, userEdits, tempRoadway, tempWorkface, isEditing, editMode, mousePos, viewMode, selectedWorkface])
   
   // 处理滚轮缩放（使用 useEffect 避免 passive listener 警告）

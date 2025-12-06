@@ -1,5 +1,110 @@
 const API_BASE = 'http://localhost:3001/api';
 
+// ==================== 通用请求封装（带重试机制）====================
+
+class ApiError extends Error {
+  constructor(message, status, detail = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/**
+ * 通用请求函数，支持自动重试
+ * @param {string} url - 请求URL
+ * @param {Object} options - fetch选项
+ * @param {number} maxRetries - 最大重试次数（默认3次）
+ * @param {number} retryDelay - 重试延迟基数（毫秒，会指数增长）
+ */
+async function apiRequest(url, options = {}, maxRetries = 3, retryDelay = 1000) {
+  let lastError;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000); // 30秒超时
+
+      const res = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        let errorDetail = null;
+        try {
+          errorDetail = await res.json();
+        } catch (e) {
+          // 无法解析JSON
+        }
+        throw new ApiError(
+          errorDetail?.detail || errorDetail?.error || res.statusText || '请求失败',
+          res.status,
+          errorDetail
+        );
+      }
+
+      return res;
+    } catch (err) {
+      lastError = err;
+
+      // 不重试的情况：客户端错误(4xx)、主动取消
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        throw err;
+      }
+      if (err.name === 'AbortError') {
+        throw new ApiError('请求超时', 408);
+      }
+
+      // 网络错误或服务器错误，等待后重试
+      if (attempt < maxRetries - 1) {
+        const delay = retryDelay * Math.pow(2, attempt); // 指数退避
+        console.warn(`API请求失败，${delay}ms后重试 (${attempt + 1}/${maxRetries}):`, err.message);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  // 所有重试都失败
+  if (lastError?.message === 'Failed to fetch') {
+    throw new ApiError('无法连接到后端服务，请确保后端已启动 (端口 3001)', 0);
+  }
+  throw lastError;
+}
+
+/**
+ * GET请求封装
+ */
+async function apiGet(endpoint) {
+  const res = await apiRequest(`${API_BASE}${endpoint}`);
+  return res.json();
+}
+
+/**
+ * POST请求封装（JSON）
+ */
+async function apiPost(endpoint, data = {}) {
+  const res = await apiRequest(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+/**
+ * POST请求封装（FormData，用于文件上传）
+ */
+async function apiPostForm(endpoint, formData) {
+  const res = await apiRequest(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    body: formData,
+  });
+  return res.json();
+}
+
 // ==================== CSV 文件上传 API ====================
 
 /**
@@ -8,15 +113,7 @@ const API_BASE = 'http://localhost:3001/api';
 export async function uploadBoundaryCSV(file) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch(`${API_BASE}/upload/boundary`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || error.error || '上传失败');
-  }
-  const result = await res.json();
+  const result = await apiPostForm('/upload/boundary', formData);
   return result.data || result;
 }
 
@@ -26,15 +123,7 @@ export async function uploadBoundaryCSV(file) {
 export async function uploadBoreholeCoordinatesCSV(file) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch(`${API_BASE}/upload/borehole-coordinates`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || error.error || '上传失败');
-  }
-  const result = await res.json();
+  const result = await apiPostForm('/upload/borehole-coordinates', formData);
   return result.data || result;
 }
 
@@ -44,15 +133,7 @@ export async function uploadBoreholeCoordinatesCSV(file) {
 export async function uploadBoreholeDataCSV(file) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch(`${API_BASE}/upload/borehole-data`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || error.error || '上传失败');
-  }
-  const result = await res.json();
+  const result = await apiPostForm('/upload/borehole-data', formData);
   return result.data || result;
 }
 
@@ -64,27 +145,21 @@ export async function uploadBatchCSV(files) {
   files.forEach(file => {
     formData.append('files', file);
   });
-  const res = await fetch(`${API_BASE}/upload/batch`, {
-    method: 'POST',
-    body: formData,
-  });
-  return res.json();
+  return apiPostForm('/upload/batch', formData);
 }
 
 /**
  * 获取 CSV 模板说明
  */
 export async function getCSVTemplate(type) {
-  const res = await fetch(`${API_BASE}/upload/template/${type}`);
-  return res.json();
+  return apiGet(`/upload/template/${type}`);
 }
 
 /**
  * 获取数据导入状态
  */
 export async function getUploadStatus() {
-  const res = await fetch(`${API_BASE}/upload/status`);
-  return res.json();
+  return apiGet('/upload/status');
 }
 
 /**
@@ -98,41 +173,21 @@ export async function uploadBoreholeLayers(files, targetCoalSeam = null) {
   if (targetCoalSeam) {
     formData.append('targetCoalSeam', targetCoalSeam);
   }
-  const res = await fetch(`${API_BASE}/boreholes/batch-upload`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || error.error || '上传失败');
-  }
-  return res.json();
+  return apiPostForm('/boreholes/batch-upload', formData);
 }
 
 /**
  * 合并钻孔坐标和分层数据
  */
 export async function mergeBoreholeData() {
-  const res = await fetch(`${API_BASE}/boreholes/merge-with-coordinates`, {
-    method: 'POST',
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || error.error || '合并失败');
-  }
-  return res.json();
+  return apiPost('/boreholes/merge-with-coordinates');
 }
 
 /**
  * 获取可用的煤层列表
  */
 export async function getCoalSeams() {
-  const res = await fetch(`${API_BASE}/boreholes/coal-seams`);
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.error || '获取煤层列表失败');
-  }
-  return res.json();
+  return apiGet('/boreholes/coal-seams');
 }
 
 // ==================== 原有 API ====================
@@ -141,158 +196,105 @@ export async function getCoalSeams() {
  * 上传采区边界
  */
 export async function uploadBoundary(points) {
-  const res = await fetch(`${API_BASE}/boundary/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ points }),
-  });
-  return res.json();
+  return apiPost('/boundary/', { points });
 }
 
 /**
  * 获取当前边界
  */
 export async function getBoundary() {
-  const res = await fetch(`${API_BASE}/boundary/`);
-  return res.json();
+  return apiGet('/boundary/');
 }
 
 /**
  * 上传钻孔数据
  */
 export async function uploadBoreholes(boreholes) {
-  const res = await fetch(`${API_BASE}/boreholes/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ boreholes }),
-  });
-  return res.json();
+  return apiPost('/boreholes/', { boreholes });
 }
 
 /**
  * 获取钻孔列表
  */
 export async function getBoreholes() {
-  const res = await fetch(`${API_BASE}/boreholes/`);
-  return res.json();
+  return apiGet('/boreholes/');
 }
 
 /**
  * 计算评分（传入权重）
  */
 export async function calculateScore(weights, resolution = 50) {
-  const res = await fetch(`${API_BASE}/score/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ weights, resolution }),
-  });
-  return res.json();
+  return apiPost('/score/', { weights, resolution });
 }
 
 /**
  * 获取评分结果
  */
 export async function getScore() {
-  const res = await fetch(`${API_BASE}/score/`);
-  return res.json();
+  return apiGet('/score/');
 }
 
 /**
  * 获取指定类型的评分网格
  */
 export async function getScoreGrid(type) {
-  const res = await fetch(`${API_BASE}/score/grid/${type}`);
-  return res.json();
+  return apiGet(`/score/grid/${type}`);
 }
 
 /**
  * 生成设计方案
  */
 export async function generateDesign(options = {}) {
-  const res = await fetch(`${API_BASE}/design/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(options),
-  });
-  return res.json();
+  return apiPost('/design/', options);
 }
 
 /**
  * 获取设计方案
  */
 export async function getDesign() {
-  const res = await fetch(`${API_BASE}/design/`);
-  return res.json();
+  return apiGet('/design/');
 }
 
 /**
  * 生成地质模型
  */
 export async function generateGeology(resolution = 50) {
-  const res = await fetch(`${API_BASE}/geology/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution }),
-  });
-  return res.json();
+  return apiPost('/geology/', { resolution });
 }
 
 /**
  * 获取地质模型
  */
 export async function getGeology() {
-  const res = await fetch(`${API_BASE}/geology/`);
-  return res.json();
+  return apiGet('/geology/');
 }
 
 /**
  * 获取钻孔分层数据（用于3D地质建模）
  */
 export async function getBoreholeLayers() {
-  const res = await fetch(`${API_BASE}/geology/layers`);
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || error.error || '获取分层数据失败');
-  }
-  return res.json();
+  return apiGet('/geology/layers');
 }
 
 /**
  * 导出设计方案为DXF文件
  */
 export async function exportDesignDXF() {
-  try {
-    const res = await fetch(`${API_BASE}/design/export/dxf`);
+  const res = await apiRequest(`${API_BASE}/design/export/dxf`);
 
-    if (!res.ok) {
-      // 尝试解析错误响应
-      let errorMsg = '导出失败';
-      try {
-        const error = await res.json();
-        errorMsg = error.detail || error.error || errorMsg;
-      } catch (e) {
-        // 如果无法解析 JSON，使用状态文本
-        errorMsg = res.statusText || errorMsg;
-      }
-      throw new Error(errorMsg);
-    }
+  // 获取文件blob
+  const blob = await res.blob();
 
-    // 获取文件blob
-    const blob = await res.blob();
-
-    // 创建下载链接
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `mining_design_${Date.now()}.dxf`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-  } catch (error) {
-    if (error.message === 'Failed to fetch') {
-      throw new Error('无法连接到后端服务，请确保后端已启动 (端口 3001)');
-    }
-    throw error;
-  }
+  // 创建下载链接
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mining_design_${Date.now()}.dxf`;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 }
+
+// 导出ApiError类供外部使用
+export { ApiError };

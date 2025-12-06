@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from utils.mining_rules import MiningRules, DEFAULT_MINING_RULES
 from utils.geology_analysis import GeologyAnalyzer
+from utils.logger import logger, log_design_operation
 
 
 @dataclass
@@ -83,35 +84,35 @@ def generate_smart_layout(
     boundary_poly = create_polygon_from_points(boundary_points)
 
     if not boundary_poly.is_valid:
-        print("Warning: Invalid boundary polygon, attempting to fix...")
+        logger.warning("Invalid boundary polygon, attempting to fix...")
         boundary_poly = boundary_poly.buffer(0)
 
     total_area = boundary_poly.area
-    print(f"采区总面积: {total_area:.0f} m²")
+    log_design_operation("开始布局", {"采区面积": f"{total_area:.0f}m²", "推进长度": face_width, "煤柱宽度": pillar_width})
 
     # 2. 内缩边界（预留边界煤柱）
     mining_area = boundary_poly.buffer(-boundary_margin)
 
     # 如果内缩后区域为空，尝试减小边界煤柱
     if mining_area.is_empty:
-        print(f"警告：边界煤柱 {boundary_margin}m 过大导致可采区为空，尝试减半...")
+        logger.warning(f"边界煤柱 {boundary_margin}m 过大导致可采区为空，尝试减半...")
         mining_area = boundary_poly.buffer(-boundary_margin / 2)
         
     if mining_area.is_empty:
-        print("警告：可采区仍为空，使用原始边界...")
+        logger.warning("可采区仍为空，使用原始边界...")
         mining_area = boundary_poly
 
     # 处理 buffer 返回 MultiPolygon 的情况（复杂边界内缩可能产生多个独立区域）
     if mining_area.geom_type == 'MultiPolygon':
         # 选择面积最大的多边形作为主要可采区
         mining_area = max(mining_area.geoms, key=lambda g: g.area)
-        print(f"警告：内缩后产生多个区域，选择最大区域继续")
+        logger.debug("内缩后产生多个区域，选择最大区域继续")
 
     if mining_area.is_empty or not hasattr(mining_area, 'area') or mining_area.area < 1000:
-        print("可采区面积过小!")
+        logger.warning("可采区面积过小!")
         return {"workfaces": [], "roadways": [], "stats": {"error": "可采区面积过小"}}
 
-    print(f"可采区面积: {mining_area.area:.0f} m²")
+    logger.debug(f"可采区面积: {mining_area.area:.0f} m²")
 
     # 3. 确定布局方向
     # 优先使用手动巷道方向，其次使用煤层倾向，最后自动检测
@@ -147,7 +148,7 @@ def generate_smart_layout(
         rotation_angle, auto_info = _auto_detect_direction(mining_area, mining_rules)
         layout_info = auto_info
 
-    print(layout_info)
+    logger.debug(layout_info)
 
     # 4. 旋转采区到水平坐标系进行切割
     centroid = mining_area.centroid
@@ -158,7 +159,7 @@ def generate_smart_layout(
     area_width = max_x - min_x   # 沿推进方向的尺寸
     area_length = max_y - min_y  # 沿工作面方向的尺寸
 
-    print(f"采区尺寸: 宽度(推进方向)={area_width:.0f}m, 长度(工作面方向)={area_length:.0f}m")
+    logger.debug(f"采区尺寸: 宽度(推进方向)={area_width:.0f}m, 长度(工作面方向)={area_length:.0f}m")
 
     # 5. 确定工作面参数
     # 工作面长度 (沿y方向，即走向)
@@ -171,7 +172,7 @@ def generate_smart_layout(
     # 区段煤柱宽度
     section_pillar = pillar_width if pillar_width else mining_rules.section_pillar_preferred
 
-    print(f"设计参数: 工作面长度={face_length:.0f}m, 推进长度={advance_length:.0f}m, 区段煤柱={section_pillar:.0f}m")
+    logger.debug(f"设计参数: 工作面长度={face_length:.0f}m, 推进长度={advance_length:.0f}m, 区段煤柱={section_pillar:.0f}m")
 
     # 6. 生成工作面
     workfaces = []
@@ -194,7 +195,7 @@ def generate_smart_layout(
 
         if actual_length < mining_rules.face_length_min * 0.8:
             # 长度太短，跳过或合并到上一个
-            print(f"条带 {face_id} 长度 {actual_length:.0f}m 过短，跳过")
+            logger.debug(f"条带 {face_id} 长度 {actual_length:.0f}m 过短，跳过")
             current_y = strip_max_y + section_pillar
             continue
 
@@ -289,7 +290,7 @@ def generate_smart_layout(
 
     # 如果工作面数量太少，尝试调整参数
     if len(workfaces) == 0:
-        print("警告：未能生成任何工作面，尝试降低约束...")
+        logger.warning("未能生成任何工作面，尝试降低约束...")
         # 降低约束重新生成
         return _generate_fallback_layout(
             boundary_points, rotated_area, rotation_angle, centroid,
@@ -318,7 +319,7 @@ def generate_smart_layout(
         "miningMethod": f"{'走向' if mining_rules.layout_direction == 'strike' else '倾向'}长壁后退式开采"
     }
 
-    print(f"生成 {len(workfaces)} 个工作面，有效 {valid_count} 个")
+    log_design_operation("布局完成", {"工作面": len(workfaces), "有效": valid_count, "巷道": len(roadways)})
 
     return {
         "workfaces": workfaces,
@@ -412,11 +413,11 @@ def _generate_fallback_layout(
 
     降低约束，确保能生成至少一个工作面
     """
-    print("使用后备布局方案...")
+    logger.info("使用后备布局方案...")
 
     # 安全检查
     if rotated_area is None or rotated_area.is_empty:
-        print("错误：旋转区域为空")
+        logger.error("旋转区域为空")
         return {"workfaces": [], "roadways": [], "stats": {"error": "旋转区域为空", "miningMethod": "后备方案"}}
 
     min_x, min_y, max_x, max_y = rotated_area.bounds
@@ -425,7 +426,7 @@ def _generate_fallback_layout(
 
     # 防止除零
     if area_height <= 0:
-        print("错误：区域高度为零")
+        logger.error("区域高度为零")
         return {"workfaces": [], "roadways": [], "stats": {"error": "区域高度为零", "miningMethod": "后备方案"}}
 
     workfaces = []

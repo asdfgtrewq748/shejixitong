@@ -1,0 +1,21 @@
+2025-12-06 12:16:02 | INFO     | mining_design | <module>:78 | ==================================================
+2025-12-06 12:16:02 | INFO     | mining_design | <module>:79 | Mining Design System Backend 启动中...
+2025-12-06 12:16:02 | INFO     | mining_design | <module>:80 | 允许的CORS域名: ['http://localhost:5173', 'http://127.0.0.1:5173']
+2025-12-06 12:16:02 | INFO     | mining_design | <module>:81 | ==================================================
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | GET /api/boundary/ -> 200 (13ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | GET /api/boreholes/ -> 200 (14ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | GET /api/boundary/ -> 200 (2ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | GET /api/boreholes/ -> 200 (3ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/score/ -> 200
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (20ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (16ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (60ms)
+2025-12-06 12:16:06 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (62ms)
+2025-12-06 12:16:07 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (62ms)
+2025-12-06 12:16:09 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (22ms)
+2025-12-06 12:16:09 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/design/ -> 200
+2025-12-06 12:16:09 | INFO     | mining_design | log_design_operation:93 | [设计] 开始布局 | 采区面积=5872308m², 推进长度=200.0, 煤柱宽度=20.0
+2025-12-06 12:16:09 | INFO     | mining_design | log_design_operation:93 | [设计] 布局完成 | 工作面=7, 有效=7, 巷道=23
+2025-12-06 12:16:09 | INFO     | mining_design | log_api_request:85 | POST /api/design/ -> 200 (18ms)
+2025-12-06 12:16:09 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (60ms)
+2025-12-06 12:16:09 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (60ms)

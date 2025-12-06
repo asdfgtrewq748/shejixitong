@@ -1,11 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
+import time
 from datetime import datetime
 
 from routers import upload, boreholes, design, score, boundary, geology
 from store import store
+from utils.logger import logger, log_api_request
 
 app = FastAPI(title="Mining Design System API", version="2.1")
 
@@ -19,6 +21,20 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """请求日志中间件"""
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start_time) * 1000
+
+    # 记录请求日志（跳过健康检查等高频请求）
+    if request.url.path not in ["/health", "/", "/favicon.ico"]:
+        log_api_request(request.method, request.url.path, response.status_code, duration_ms)
+
+    return response
 
 # 注册路由
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
@@ -59,4 +75,8 @@ async def clear_project():
 
 
 if __name__ == "__main__":
+    logger.info("="*50)
+    logger.info("Mining Design System Backend 启动中...")
+    logger.info(f"允许的CORS域名: {ALLOWED_ORIGINS}")
+    logger.info("="*50)
     uvicorn.run("main:app", host="0.0.0.0", port=3001, reload=True)
