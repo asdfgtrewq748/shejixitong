@@ -10,6 +10,7 @@ import {
   RightPanel,
   GeoModelPreview
 } from './components';
+import { useCanvasInteraction } from './hooks';
 
 const MINING_BOUNDARY = [
   { x: 100, y: 100 }, { x: 700, y: 80 }, { x: 750, y: 500 },
@@ -65,30 +66,12 @@ const MiningDesignSystem = () => {
   const [displayDimension, setDisplayDimension] = useState('composite'); // safety | economic | env | composite
   const [viewMode, setViewMode] = useState('design'); // 'design' | 'heatmap' - 视图模式
 
-  // 画布交互状态
-  const [scale, setScale] = useState(1);
-  const [showGrid, setShowGrid] = useState(true);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [viewInitialized, setViewInitialized] = useState(false);
-  
-  // 编辑模式状态
-  const [isEditing, setIsEditing] = useState(false);
-  const [editMode, setEditMode] = useState(null); // 'roadway' | 'workface' | null
-  const [tempRoadway, setTempRoadway] = useState(null); // 临时绘制的巷道
-  const [tempWorkface, setTempWorkface] = useState(null); // 临时绘制的工作面
-  const [userEdits, setUserEdits] = useState({ roadways: [], workfaces: [] }); // 用户自定义元素
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [drawStart, setDrawStart] = useState(null);
-  const lastPanPos = useRef({ x: 0, y: 0 });
-
   // UI 面板状态
+  const [showGrid, setShowGrid] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBorehole, setSelectedBorehole] = useState(null);
-  const [selectedWorkface, setSelectedWorkface] = useState(null);
   const [importMode, setImportMode] = useState('file'); // 'file' | 'demo'
   const [leftPanelMode, setLeftPanelMode] = useState('import'); // 'import' | 'model' - 左侧面板模式
   const [designParams, setDesignParams] = useState({
@@ -107,46 +90,44 @@ const MiningDesignSystem = () => {
     setSystemLog(prev => [`[${time}] ${msg}|${type}`, ...prev].slice(0, 50));
   };
 
+  // 使用画布交互 Hook
+  const {
+    scale,
+    mousePos,
+    panOffset,
+    setPanOffset,
+    isPanning,
+    isEditing,
+    editMode,
+    tempRoadway,
+    tempWorkface,
+    userEdits,
+    selectedWorkface,
+    setSelectedWorkface,
+    viewInitialized,
+    handleCanvasMouseMove,
+    handleCanvasClick,
+    handleCanvasMouseDown,
+    handleCanvasMouseUp,
+    handleCanvasDoubleClick,
+    handleZoomIn,
+    handleZoomOut,
+    handleResetView,
+    initializeView,
+    toggleEditMode,
+    clearUserEdits,
+  } = useCanvasInteraction({
+    canvasRef,
+    boundary,
+    designData,
+    activeTab,
+    addLog
+  });
+
   // 自动适配视图 - 当边界数据加载后调整视窗
   useEffect(() => {
-    if (boundary.length > 0 && !viewInitialized && canvasRef.current) {
-      const canvas = canvasRef.current;
-      // 使用 getBoundingClientRect 获取 CSS 尺寸（不受 DPR 影响）
-      const rect = canvas.getBoundingClientRect();
-      const canvasWidth = rect.width || 900;
-      const canvasHeight = rect.height || 700;
-      
-      // 计算边界的范围
-      const xs = boundary.map(p => p.x);
-      const ys = boundary.map(p => p.y);
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(...ys);
-      const maxY = Math.max(...ys);
-      const dataWidth = maxX - minX;
-      const dataHeight = maxY - minY;
-      
-      // 计算缩放比例（留出适当边距，让采区占据大部分画布）
-      const scaleX = (canvasWidth * 0.70) / dataWidth;  // 70% 画布宽度（确保可见）
-      const scaleY = (canvasHeight * 0.70) / dataHeight; // 70% 画布高度
-      const newScale = Math.min(scaleX, scaleY, 3); // 最大3倍，适应不同尺寸的采区
-
-      // 计算平移偏移使数据精确居中
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
-      const offsetX = (canvasWidth / 2 / newScale) - centerX;
-      const offsetY = (canvasHeight / 2 / newScale) - centerY;
-      
-      setScale(newScale);
-      setPanOffset({ x: offsetX, y: offsetY });
-      setViewInitialized(true);
-      
-      console.log(`[视图适配] canvasSize=${canvasWidth.toFixed(0)}x${canvasHeight.toFixed(0)}, scale=${newScale.toFixed(4)}`);
-      console.log(`[视图适配] 数据范围: X[${minX.toFixed(0)}-${maxX.toFixed(0)}], Y[${minY.toFixed(0)}-${maxY.toFixed(0)}], size=${dataWidth.toFixed(0)}x${dataHeight.toFixed(0)}`);
-      console.log(`[视图适配] offset=(${offsetX.toFixed(0)}, ${offsetY.toFixed(0)})`);
-      addLog(`视图已自动适配至采区范围`, 'success');
-    }
-  }, [boundary, viewInitialized]);
+    initializeView();
+  }, [boundary, viewInitialized, initializeView]);
 
   // 自动加载内置数据
   useEffect(() => {
@@ -224,238 +205,6 @@ const MiningDesignSystem = () => {
 
     fetchBuiltInData();
   }, []); // 仅在组件挂载时执行一次
-
-  // 画布鼠标事件处理
-  const handleCanvasMouseMove = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX / scale - panOffset.x);
-    const y = Math.round((e.clientY - rect.top) * scaleY / scale - panOffset.y);
-    setMousePos({ x, y });
-
-    // 拖拽平移
-    if (isPanning) {
-      const dx = (e.clientX - lastPanPos.current.x) / scale;
-      const dy = (e.clientY - lastPanPos.current.y) / scale;
-      setPanOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
-      lastPanPos.current = { x: e.clientX, y: e.clientY };
-    }
-    
-    // 编辑模式：更新工作面预览
-    if (isEditing && editMode === 'workface' && isDrawing && drawStart) {
-      const width = x - drawStart.x;
-      const height = y - drawStart.y;
-      setTempWorkface({ x: drawStart.x, y: drawStart.y, width, height });
-    }
-  };
-
-  const handleCanvasClick = (e) => {
-    if (isPanning || isEditing) return;
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX / scale - panOffset.x);
-    const y = Math.round((e.clientY - rect.top) * scaleY / scale - panOffset.y);
-    
-    // 检查是否点击了工作面
-    if (designData && designData.workfaces && activeTab === 'synthesis') {
-      const clickedFace = designData.workfaces.find(face => 
-        x >= face.x && x <= face.x + face.width &&
-        y >= face.y && y <= face.y + face.length
-      );
-      
-      if (clickedFace) {
-        setSelectedWorkface(clickedFace);
-        addLog(`选中工作面: ${clickedFace.id}`, 'info');
-        return;
-      }
-    }
-    
-    setSelectedWorkface(null);
-  };
-
-  const handleCanvasMouseDown = (e) => {
-    if (!isEditing) {
-      // 非编辑模式：平移功能
-      if (e.button === 1 || (e.button === 0 && e.altKey)) {
-        setIsPanning(true);
-        lastPanPos.current = { x: e.clientX, y: e.clientY };
-        e.preventDefault();
-      }
-      return;
-    }
-
-    // 编辑模式下的绘制
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX / scale - panOffset.x);
-    const y = Math.round((e.clientY - rect.top) * scaleY / scale - panOffset.y);
-
-    if (editMode === 'roadway') {
-      // 绘制巷道路径：点击添加路径点
-      if (!tempRoadway) {
-        setTempRoadway({ path: [{ x, y }] });
-        addLog('开始绘制巷道，点击添加路径点，双击完成', 'info');
-      } else {
-        setTempRoadway(prev => ({
-          ...prev,
-          path: [...prev.path, { x, y }]
-        }));
-      }
-    } else if (editMode === 'workface') {
-      // 绘制工作面：拖拽绘制矩形
-      setIsDrawing(true);
-      setDrawStart({ x, y });
-      setTempWorkface({ x, y, width: 0, height: 0 });
-    }
-  };
-
-  const handleCanvasMouseUp = (e) => {
-    if (isPanning) {
-      setIsPanning(false);
-      return;
-    }
-
-    if (isEditing && editMode === 'workface' && isDrawing) {
-      // 完成工作面绘制
-      setIsDrawing(false);
-      if (tempWorkface && (Math.abs(tempWorkface.width) > 20 || Math.abs(tempWorkface.height) > 20)) {
-        // 规范化矩形（确保宽高为正）
-        const normalized = {
-          x: tempWorkface.width < 0 ? tempWorkface.x + tempWorkface.width : tempWorkface.x,
-          y: tempWorkface.height < 0 ? tempWorkface.y + tempWorkface.height : tempWorkface.y,
-          width: Math.abs(tempWorkface.width),
-          height: Math.abs(tempWorkface.height)
-        };
-        
-        const newWorkface = {
-          id: `UWF-${userEdits.workfaces.length + 1}`,
-          ...normalized,
-          locked: true,
-          userDefined: true
-        };
-        
-        setUserEdits(prev => ({
-          ...prev,
-          workfaces: [...prev.workfaces, newWorkface]
-        }));
-        addLog(`工作面已添加: ${newWorkface.id} (${normalized.width}x${normalized.height}m)`, 'success');
-      }
-      setTempWorkface(null);
-      setDrawStart(null);
-    }
-  };
-
-  const handleCanvasWheel = (e) => {
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setScale(prev => Math.max(0.25, Math.min(4, prev * delta)));
-  };
-
-  // 缩放控制
-  const handleZoomIn = () => setScale(prev => Math.min(4, prev * 1.25));
-  const handleZoomOut = () => setScale(prev => Math.max(0.25, prev * 0.8));
-  
-  const handleResetView = () => {
-    if (boundary.length > 0 && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const canvasWidth = canvas.width || 900;
-      const canvasHeight = canvas.height || 700;
-      
-      // 计算边界的范围
-      const xs = boundary.map(p => p.x);
-      const ys = boundary.map(p => p.y);
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(...ys);
-      const maxY = Math.max(...ys);
-      const dataWidth = maxX - minX;
-      const dataHeight = maxY - minY;
-      
-      // 计算缩放比例（留出适当边距，让采区占据大部分画布）
-      const scaleX = (canvasWidth * 0.30) / dataWidth;  // 30% 画布宽度
-      const scaleY = (canvasHeight * 0.30) / dataHeight; // 30% 画布高度
-      const newScale = Math.min(scaleX, scaleY, 3); // 最大3倍，适应不同尺寸的采区
-
-      // 计算平移偏移使数据精确居中
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
-      const offsetX = (canvasWidth / 2 / newScale) - centerX;
-      const offsetY = (canvasHeight / 2 / newScale) - centerY;
-      
-      setScale(newScale);
-      setPanOffset({ x: offsetX, y: offsetY });
-      addLog('视图已重置至最佳显示范围', 'info');
-    } else {
-      setScale(1);
-      setPanOffset({ x: 0, y: 0 });
-    }
-  };
-
-  // 编辑模式控制
-  const toggleEditMode = (mode) => {
-    if (isEditing && editMode === mode) {
-      // 取消编辑模式
-      setIsEditing(false);
-      setEditMode(null);
-      setTempRoadway(null);
-      setTempWorkface(null);
-      addLog('已退出编辑模式', 'info');
-    } else {
-      // 进入编辑模式
-      setIsEditing(true);
-      setEditMode(mode);
-      setTempRoadway(null);
-      setTempWorkface(null);
-      if (mode === 'roadway') {
-        addLog('进入巷道编辑模式：点击添加路径点，双击完成', 'info');
-        addLog('提示：绘制主巷道将作为工作面设计的基准方向', 'info');
-      } else if (mode === 'workface') {
-        addLog('进入工作面编辑模式：拖拽绘制矩形', 'info');
-      }
-    }
-  };
-
-  const finishRoadwayDrawing = () => {
-    if (tempRoadway && tempRoadway.path.length >= 2) {
-      const newRoadway = {
-        id: `UR-${userEdits.roadways.length + 1}`,
-        path: tempRoadway.path,
-        locked: true,
-        userDefined: true
-      };
-      setUserEdits(prev => ({
-        ...prev,
-        roadways: [...prev.roadways, newRoadway]
-      }));
-      addLog(`巷道已添加: ${newRoadway.id} (${newRoadway.path.length}个路径点)`, 'success');
-      setTempRoadway(null);
-    } else {
-      addLog('巷道路径点不足（至少需要2个点）', 'warning');
-      setTempRoadway(null);
-    }
-  };
-
-  const clearUserEdits = () => {
-    setUserEdits({ roadways: [], workfaces: [] });
-    addLog('已清除所有用户编辑', 'info');
-  };
-
-  // 处理双击完成巷道绘制
-  const handleCanvasDoubleClick = (e) => {
-    if (isEditing && editMode === 'roadway' && tempRoadway) {
-      e.preventDefault();
-      finishRoadwayDrawing();
-    }
-  };
 
   // 导出报告
   const handleExportReport = () => {
