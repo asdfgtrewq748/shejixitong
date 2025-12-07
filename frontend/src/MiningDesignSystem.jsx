@@ -1,18 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import {
-  Layers, Upload, Database, Activity, ShieldCheck, DollarSign, Leaf, Cpu,
-  Map as MapIcon, Settings, ChevronRight, Play, Save, FileText,
-  Zap, Search, AlertCircle, CheckCircle, Crosshair, BarChart3, Wind, Droplets, Hammer,
-  Maximize2, Minimize2, Grid, FolderOpen, Box, Terminal
-} from 'lucide-react';
 import * as api from './api';
 import FileUploader from './FileUploader';
 import {
   GlobalStyles,
   AppHeader,
   SettingsPanel,
-  LogPanel,
-  CanvasToolbar,
+  CanvasSection,
+  LeftSidebar,
+  RightPanel,
   GeoModelPreview
 } from './components';
 
@@ -1744,617 +1739,62 @@ const MiningDesignSystem = () => {
 
     <main className="flex flex-1 overflow-hidden p-4 gap-4">
 
-    <aside className="w-80 glass-panel rounded-xl flex flex-col overflow-hidden animate-[slideInLeft_0.5s_ease-out]">
-      {/* 地质建模视图模式 */}
-      {leftPanelMode === 'model' && boreholes.length > 0 ? (
-        <div className="flex flex-col h-full">
-          {/* 模型视图头部 */}
-          <div className="px-4 py-3 border-b border-gray-700/50 flex items-center justify-between bg-gray-900/30">
-            <h3 className="text-xs uppercase tracking-[0.2em] text-cyan-400 font-bold flex items-center gap-2">
-              <Box size={12} /> 地质建模
-            </h3>
-            <button
-              onClick={() => setLeftPanelMode('import')}
-              className="flex items-center gap-1.5 px-2 py-1 text-[10px] rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors border border-gray-600"
-            >
-              <Upload size={10} /> 重新导入
-            </button>
-          </div>
+    <LeftSidebar
+      leftPanelMode={leftPanelMode}
+      setLeftPanelMode={setLeftPanelMode}
+      importMode={importMode}
+      setImportMode={setImportMode}
+      boundary={boundary}
+      boreholes={boreholes}
+      weights={weights}
+      setWeights={setWeights}
+      isLoading={isLoading}
+      handleImportBoundary={handleImportBoundary}
+      handleImportBoreholes={handleImportBoreholes}
+      handleGenerateDesign={handleGenerateDesign}
+      handleFileUploadComplete={handleFileUploadComplete}
+      addLog={addLog}
+    />
 
-          {/* 3D 地质模型预览 - 占据主要空间 */}
-          <div className="flex-1 min-h-0">
-            <GeoModelPreview data={boreholes} />
-          </div>
+    <CanvasSection
+      canvasRef={canvasRef}
+      scale={scale}
+      mousePos={mousePos}
+      isPanning={isPanning}
+      isEditing={isEditing}
+      isLoading={isLoading}
+      boundary={boundary}
+      handleCanvasMouseMove={handleCanvasMouseMove}
+      handleCanvasMouseDown={handleCanvasMouseDown}
+      handleCanvasMouseUp={handleCanvasMouseUp}
+      handleCanvasClick={handleCanvasClick}
+      handleCanvasDoubleClick={handleCanvasDoubleClick}
+      showGrid={showGrid}
+      setShowGrid={setShowGrid}
+      searchOpen={searchOpen}
+      setSearchOpen={setSearchOpen}
+      editMode={editMode}
+      toggleEditMode={toggleEditMode}
+      userEdits={userEdits}
+      clearUserEdits={clearUserEdits}
+      handleZoomIn={handleZoomIn}
+      handleZoomOut={handleZoomOut}
+      handleResetView={handleResetView}
+      searchQuery={searchQuery}
+      setSearchQuery={setSearchQuery}
+      filteredBoreholes={filteredBoreholes}
+      setSelectedBorehole={setSelectedBorehole}
+      setPanOffset={setPanOffset}
+      addLog={addLog}
+    />
 
-          {/* 数据摘要 */}
-          <div className="px-4 py-3 border-t border-gray-700/50 bg-gray-900/30 space-y-2">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider">数据摘要</div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex items-center gap-2 text-blue-300">
-                <CheckCircle size={10} /> 边界: {boundary.length} 点
-              </div>
-              <div className="flex items-center gap-2 text-amber-300">
-                <CheckCircle size={10} /> 钻孔: {boreholes.length} 个
-              </div>
-            </div>
-          </div>
-
-          {/* 参数设置和生成按钮 */}
-          <div className="p-4 border-t border-gray-700/50 space-y-4 overflow-y-auto max-h-80">
-            <div className="space-y-4">
-              <h3 className="text-xs uppercase tracking-[0.2em] text-purple-400 font-bold flex items-center gap-2 pb-2 border-b border-gray-700/50">
-                <Settings size={12} /> 评分权重
-              </h3>
-
-              {[
-                { key: 'safety', label: '安全系数', icon: ShieldCheck, color: 'text-blue-400', bg: 'bg-blue-500' },
-                { key: 'economic', label: '经济效益', icon: DollarSign, color: 'text-amber-400', bg: 'bg-amber-500' },
-                { key: 'env', label: '环境友好', icon: Leaf, color: 'text-emerald-400', bg: 'bg-emerald-500' },
-              ].map(item => (
-                <div key={item.key} className="space-y-2">
-                  <div className="flex justify-between text-xs items-center">
-                    <span className={`flex items-center gap-1.5 ${item.color} font-medium`}>
-                      <item.icon size={12}/> {item.label}
-                    </span>
-                    <span className={`font-mono ${item.color} bg-gray-800 px-1.5 py-0.5 rounded text-[10px]`}>
-                      {weights[item.key]}%
-                    </span>
-                  </div>
-                  <div className="relative h-1 bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className={`absolute top-0 left-0 h-full ${item.bg} transition-all duration-300`}
-                      style={{ width: `${weights[item.key]}%` }}
-                    ></div>
-                    <input
-                      type="range" min="0" max="100"
-                      value={weights[item.key]}
-                      onChange={(e) => setWeights({...weights, [item.key]: parseInt(e.target.value)})}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <button
-              onClick={handleGenerateDesign}
-              disabled={boreholes.length === 0 || isLoading}
-              className={`
-                relative w-full py-4 rounded-xl flex items-center justify-center gap-2 font-bold text-xs tracking-wider uppercase transition-all overflow-hidden group
-                ${boreholes.length > 0
-                  ? 'text-white shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:shadow-[0_0_25px_rgba(59,130,246,0.6)]'
-                  : 'bg-gray-800/50 text-gray-500 cursor-not-allowed border border-gray-700'}
-              `}
-            >
-              {boreholes.length > 0 && (
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 transition-transform duration-300 group-hover:scale-105"></div>
-              )}
-              <div className="relative z-10 flex items-center gap-2">
-                {isLoading ? <Activity className="animate-spin" size={14} /> : <Play fill="currentColor" size={14} />}
-                {isLoading ? '正在计算...' : '生成最优设计'}
-              </div>
-            </button>
-          </div>
-        </div>
-      ) : (
-        /* 数据导入模式 */
-        <div className="p-5 space-y-8 overflow-y-auto">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-gray-700/50">
-              <h3 className="text-xs uppercase tracking-[0.2em] text-blue-400 font-bold flex items-center gap-2">
-                <Database size={12} /> 数据源
-              </h3>
-              {/* 导入模式切换 */}
-              <div className="flex bg-gray-800/50 rounded-full p-0.5 border border-gray-700">
-                <button
-                  onClick={() => setImportMode('file')}
-                  className={`px-2 py-1 text-[10px] rounded-full transition-all ${
-                    importMode === 'file'
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  文件
-                </button>
-                <button
-                  onClick={() => setImportMode('demo')}
-                  className={`px-2 py-1 text-[10px] rounded-full transition-all ${
-                    importMode === 'demo'
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  演示
-                </button>
-              </div>
-            </div>
-
-            {/* CSV 文件上传模式 */}
-            {importMode === 'file' && (
-              <FileUploader
-                onUploadComplete={handleFileUploadComplete}
-                onLog={addLog}
-              />
-            )}
-
-            {/* 演示数据模式 */}
-            {importMode === 'demo' && (
-              <div className="space-y-3">
-                <button
-                  onClick={handleImportBoundary}
-                  className={`group w-full relative overflow-hidden p-4 rounded-xl border transition-all duration-300 text-left
-                    ${boundary.length > 0
-                      ? 'bg-blue-900/20 border-blue-500/50 text-blue-300'
-                      : 'bg-gray-800/40 border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800'}
-                  `}
-                >
-                   <div className={`absolute inset-0 bg-blue-400/10 translate-y-full transition-transform duration-300 ${boundary.length > 0 ? '' : 'group-hover:translate-y-0'}`}></div>
-                   <div className="flex justify-between items-center relative z-10">
-                    <div>
-                      <span className="block text-sm font-bold">采区边界矢量</span>
-                      <span className="text-[10px] opacity-70">模拟 DXF 数据</span>
-                    </div>
-                    {boundary.length > 0 ? <CheckCircle className="text-blue-400" size={18} /> : <Upload size={18} />}
-                   </div>
-                </button>
-
-                <button
-                  onClick={handleImportBoreholes}
-                  disabled={boundary.length === 0}
-                  className={`group w-full relative overflow-hidden p-4 rounded-xl border transition-all duration-300 text-left
-                    ${boreholes.length > 0
-                      ? 'bg-amber-900/20 border-amber-500/50 text-amber-300'
-                      : 'bg-gray-800/40 border-gray-700 text-gray-400 hover:border-gray-500 hover:bg-gray-800'}
-                    ${boundary.length === 0 ? 'opacity-40 cursor-not-allowed' : ''}
-                  `}
-                >
-                   <div className={`absolute inset-0 bg-amber-400/10 translate-y-full transition-transform duration-300 ${boreholes.length > 0 ? '' : 'group-hover:translate-y-0'}`}></div>
-                   <div className="flex justify-between items-center relative z-10">
-                    <div>
-                      <span className="block text-sm font-bold">钻孔地质库</span>
-                      <span className="text-[10px] opacity-70">模拟 30 个钻孔</span>
-                    </div>
-                    {boreholes.length > 0 ? <CheckCircle className="text-amber-400" size={18} /> : <Database size={18} />}
-                   </div>
-                </button>
-              </div>
-            )}
-
-            {/* 数据状态指示器 */}
-            {(boundary.length > 0 || boreholes.length > 0) && (
-              <div className="bg-gray-800/30 rounded-lg p-3 space-y-2">
-                <div className="text-[10px] text-gray-400 uppercase tracking-wider">已导入数据</div>
-                {boundary.length > 0 && (
-                  <div className="flex items-center gap-2 text-xs text-blue-300">
-                    <CheckCircle size={12} /> 边界顶点: {boundary.length} 个
-                  </div>
-                )}
-                {boreholes.length > 0 && (
-                  <div className="flex items-center gap-2 text-xs text-amber-300">
-                    <CheckCircle size={12} /> 钻孔数据: {boreholes.length} 条
-                  </div>
-                )}
-                {/* 切换到模型视图按钮 */}
-                {boreholes.length > 0 && (
-                  <button
-                    onClick={() => setLeftPanelMode('model')}
-                    className="mt-2 w-full py-2 text-xs text-cyan-400 hover:text-cyan-300 bg-cyan-900/20 hover:bg-cyan-900/30 border border-cyan-500/30 rounded-lg transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Box size={12} /> 查看地质建模
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-6">
-            <h3 className="text-xs uppercase tracking-[0.2em] text-purple-400 font-bold flex items-center gap-2 pb-2 border-b border-gray-700/50">
-              <Settings size={12} /> 参数设置
-            </h3>
-
-            {[
-              { key: 'safety', label: '安全系数', icon: ShieldCheck, color: 'text-blue-400', accent: 'accent-blue-500', bg: 'bg-blue-500' },
-              { key: 'economic', label: '经济效益', icon: DollarSign, color: 'text-amber-400', accent: 'accent-amber-500', bg: 'bg-amber-500' },
-              { key: 'env', label: '环境友好', icon: Leaf, color: 'text-emerald-400', accent: 'accent-emerald-500', bg: 'bg-emerald-500' },
-            ].map(item => (
-              <div key={item.key} className="space-y-3 group">
-                <div className="flex justify-between text-sm items-center">
-                  <span className={`flex items-center gap-2 ${item.color} font-medium`}>
-                    <item.icon size={14}/> {item.label}
-                  </span>
-                  <span className={`font-mono ${item.color} bg-gray-800 px-2 py-0.5 rounded text-xs`}>
-                    {weights[item.key]}%
-                  </span>
-                </div>
-                <div className="relative h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className={`absolute top-0 left-0 h-full ${item.bg} transition-all duration-300`}
-                    style={{ width: `${weights[item.key]}%` }}
-                  ></div>
-                  <input
-                    type="range" min="0" max="100"
-                    value={weights[item.key]}
-                    onChange={(e) => setWeights({...weights, [item.key]: parseInt(e.target.value)})}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-auto">
-            <button
-              onClick={handleGenerateDesign}
-              disabled={boreholes.length === 0 || isLoading}
-              className={`
-                relative w-full py-5 rounded-xl flex items-center justify-center gap-3 font-bold text-sm tracking-wider uppercase transition-all overflow-hidden group
-                ${boreholes.length > 0
-                  ? 'text-white shadow-[0_0_20px_rgba(59,130,246,0.4)] hover:shadow-[0_0_30px_rgba(59,130,246,0.6)]'
-                  : 'bg-gray-800/50 text-gray-500 cursor-not-allowed border border-gray-700'}
-              `}
-            >
-              {boreholes.length > 0 && (
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 transition-transform duration-300 group-hover:scale-105"></div>
-              )}
-              {boreholes.length > 0 && (
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-              )}
-              <div className="relative z-10 flex items-center gap-2">
-                {isLoading ? <Activity className="animate-spin" /> : <Play fill="currentColor" size={16} />}
-                {isLoading ? '正在计算...' : '生成最优设计方案'}
-              </div>
-            </button>
-          </div>
-        </div>
-      )}
-    </aside>
-
-    <section className="flex-1 relative flex flex-col rounded-xl overflow-hidden glass-panel border-gray-700/50 shadow-2xl">
-      <div className="absolute top-0 left-0 right-0 h-12 bg-gradient-to-b from-gray-900/90 to-transparent z-10 flex items-center justify-between px-4 pointer-events-none">
-        <div className="flex gap-4 text-[10px] text-gray-400 font-mono">
-          <span className="flex items-center gap-1"><Crosshair size={10} /> 坐标: {mousePos.x}, {mousePos.y}</span>
-          <span className="flex items-center gap-1"><Maximize2 size={10} /> 比例: {(scale * 100).toFixed(0)}%</span>
-        </div>
-        <div className="flex gap-2">
-          <div className="bg-black/40 backdrop-blur rounded px-2 py-1 border border-gray-700/50 flex items-center gap-2 text-[10px] text-gray-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.8)]"></span> 高适宜区
-          </div>
-          <div className="bg-black/40 backdrop-blur rounded px-2 py-1 border border-gray-700/50 flex items-center gap-2 text-[10px] text-gray-300">
-            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.8)]"></span> 危险区域
-          </div>
-        </div>
-      </div>
-
-      <div className="relative flex-1 bg-gray-900 flex items-center justify-center overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none opacity-20" 
-          style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '100px 100px' }}>
-        </div>
-
-        <canvas 
-          ref={canvasRef}
-          width={900}
-          height={700}
-          className={`w-full h-full object-contain ${isPanning ? 'cursor-grabbing' : (isEditing ? 'cursor-crosshair' : 'cursor-default')}`}
-          onMouseMove={handleCanvasMouseMove}
-          onMouseDown={handleCanvasMouseDown}
-          onMouseUp={handleCanvasMouseUp}
-          onMouseLeave={handleCanvasMouseUp}
-          onClick={handleCanvasClick}
-          onDoubleClick={handleCanvasDoubleClick}
-        />
-                
-        {isLoading && (
-          <div className="absolute inset-0 bg-gray-900/80 backdrop-blur-sm flex flex-col items-center justify-center z-30">
-            <div className="relative w-24 h-24 mb-6">
-              <div className="absolute inset-0 rounded-full border-t-2 border-b-2 border-blue-500 animate-spin"></div>
-              <div className="absolute inset-2 rounded-full border-r-2 border-l-2 border-purple-500 animate-spin reverse duration-700"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Cpu className="text-blue-400 animate-pulse" size={32} />
-              </div>
-            </div>
-            <h2 className="text-2xl font-black text-white tracking-widest mb-1">COMPUTING</h2>
-            <div className="flex items-center gap-1 text-blue-400 font-mono text-sm">
-              <span>[</span>
-              <span className="w-20 h-2 bg-gray-800 rounded-full overflow-hidden relative">
-                <span className="absolute inset-0 bg-blue-500 animate-[scanline_1s_infinite]"></span>
-              </span>
-              <span>]</span>
-            </div>
-          </div>
-        )}
-
-        {boundary.length === 0 && !isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center group">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full border-2 border-dashed border-gray-700 flex items-center justify-center group-hover:border-blue-500/50 group-hover:scale-110 transition-all duration-500">
-                <Layers size={32} className="text-gray-600 group-hover:text-blue-400 transition-colors" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-300 tracking-wide">NO DATA LOADED</h3>
-              <p className="text-gray-500 text-sm mt-2 font-mono">Initiate sequence via [Data Sources]</p>
-            </div>
-          </div>
-        )}
-      </div>
-            
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-full px-4 py-2 flex gap-4 z-20 shadow-xl">
-        <button 
-          onClick={() => setShowGrid(!showGrid)} 
-          className={`transition-colors ${showGrid ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}
-          title="切换网格"
-        >
-          <Grid size={18}/>
-        </button>
-        <button 
-          onClick={() => setSearchOpen(!searchOpen)} 
-          className={`transition-colors ${searchOpen ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}
-          title="搜索钻孔"
-        >
-          <Search size={18}/>
-        </button>
-        <div className="w-px h-6 bg-gray-700"></div>
-        
-        {/* 编辑模式按钮 */}
-        <button 
-          onClick={() => toggleEditMode('roadway')} 
-          className={`flex items-center gap-2 px-3 py-1 rounded-full transition-colors ${isEditing && editMode === 'roadway' ? 'bg-blue-900/50 text-blue-400 border border-blue-500/50' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-          title="绘制巷道"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 6 L12 4 L20 6 L20 18 L12 20 L4 18 Z M4 6 L20 18 M20 6 L4 18"></path>
-          </svg>
-          <span className="text-xs font-bold">绘制巷道</span>
-        </button>
-        <button 
-          onClick={() => toggleEditMode('workface')} 
-          className={`flex items-center gap-2 px-3 py-1 rounded-full transition-colors ${isEditing && editMode === 'workface' ? 'bg-orange-900/50 text-orange-400 border border-orange-500/50' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-          title="绘制工作面"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-          </svg>
-          <span className="text-xs font-bold">绘制工作面</span>
-        </button>
-        {(userEdits.roadways.length > 0 || userEdits.workfaces.length > 0) && (
-          <button 
-            onClick={clearUserEdits} 
-            className="text-red-400 hover:text-red-300 transition-colors"
-            title="清除用户编辑"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-          </button>
-        )}
-        <div className="w-px h-6 bg-gray-700"></div>
-        <button 
-          onClick={handleZoomOut} 
-          className="text-gray-400 hover:text-white transition-colors"
-          title="缩小"
-        >
-          <Minimize2 size={18}/>
-        </button>
-        <button 
-          onClick={handleZoomIn} 
-          className="text-gray-400 hover:text-white transition-colors"
-          title="放大"
-        >
-          <Maximize2 size={18}/>
-        </button>
-        <button 
-          onClick={handleResetView} 
-          className="text-gray-400 hover:text-white transition-colors"
-          title="一键复位视图"
-        >
-          <Crosshair size={18}/>
-        </button>
-      </div>
-
-      {/* 搜索面板 */}
-      {searchOpen && (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl p-4 z-30 shadow-xl w-72">
-          <div className="flex items-center gap-2 mb-3">
-            <Search size={14} className="text-gray-400" />
-            <input
-              type="text"
-              placeholder="搜索钻孔 ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-              autoFocus
-            />
-          </div>
-          <div className="max-h-40 overflow-y-auto space-y-1">
-            {filteredBoreholes.length === 0 ? (
-              <div className="text-gray-500 text-xs text-center py-2">无匹配钻孔</div>
-            ) : (
-              filteredBoreholes.map(hole => (
-                <button
-                  key={hole.id}
-                  onClick={() => {
-                    setSelectedBorehole(hole);
-                    setPanOffset({ x: -hole.x + 450, y: -hole.y + 350 });
-                    setSearchOpen(false);
-                    addLog(`已定位到钻孔 ${hole.id}`, 'info');
-                  }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-gray-800 text-sm flex justify-between items-center"
-                >
-                  <span className="text-white font-mono">{hole.id}</span>
-                  <span className="text-gray-500 text-xs">({Math.round(hole.x)}, {Math.round(hole.y)})</span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-    </section>
-
-    <aside className="w-80 glass-panel rounded-xl flex flex-col overflow-hidden animate-[slideInRight_0.5s_ease-out]">
-      {/* 设计依据 & 预计指标 (条件渲染) */}
-      {activeTab === 'synthesis' && designData && (
-        <div className="flex-1 flex flex-col overflow-y-auto">
-          <div className="border-b border-gray-700/50 bg-gray-900/20 p-4 shrink-0">
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Cpu size={14} className="text-purple-400"/> 设计依据
-            </h4>
-
-            {/* Selected Workface Details */}
-            {selectedWorkface ? (
-              <div className="bg-purple-900/20 border border-purple-500/30 rounded-lg p-3 mb-3 animate-pulse-once">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-purple-300 font-bold text-sm">{selectedWorkface.id}</span>
-                  <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">已选中</span>
-                </div>
-                <div className="space-y-1 text-xs text-gray-300">
-                  <div className="flex justify-between"><span>推进长度:</span> <span className="font-mono">{selectedWorkface.width?.toFixed(0)}m</span></div>
-                  <div className="flex justify-between"><span>工作面长度:</span> <span className="font-mono">{selectedWorkface.length?.toFixed(0)}m</span></div>
-                  <div className="flex justify-between"><span>面积:</span> <span className="font-mono">{selectedWorkface.area?.toFixed(0)}m²</span></div>
-                  <div className="flex justify-between"><span>评分:</span> <span className="font-mono text-green-400">{selectedWorkface.avgScore?.toFixed(1)}</span></div>
-                </div>
-              </div>
-            ) : (
-              <div className="text-[10px] text-gray-500 italic mb-3 text-center border border-dashed border-gray-700 rounded p-2">
-                点击工作面查看详情
-              </div>
-            )}
-
-            {/* General Design Params */}
-            <div className="space-y-2 text-[10px]">
-              <div className="flex justify-between items-center border-b border-gray-800 pb-1">
-                <span className="text-gray-400">开采方式</span>
-                <span className="text-white font-mono">{designData.stats?.miningMethod || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between items-center border-b border-gray-800 pb-1">
-                <span className="text-gray-400">布置方向</span>
-                <span className="text-white font-mono uppercase">{designData.stats?.layoutDirection || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between items-center border-b border-gray-800 pb-1">
-                <span className="text-gray-400">工作面数量</span>
-                <span className="text-white font-mono">{designData.stats?.count || 0} 个</span>
-              </div>
-              <div className="flex justify-between items-center border-b border-gray-800 pb-1">
-                <span className="text-gray-400">平均长度</span>
-                <span className="text-white font-mono">{designData.stats?.avgFaceLength?.toFixed(0) || 0}m</span>
-              </div>
-              <div className="flex justify-between items-center border-b border-gray-800 pb-1">
-                <span className="text-gray-400">区段煤柱</span>
-                <span className="text-amber-300 font-mono">{designData.designParams?.pillarWidth}m</span>
-              </div>
-               <div className="flex justify-between items-center border-b border-gray-800 pb-1">
-                <span className="text-gray-400">推进长度</span>
-                <span className="text-blue-300 font-mono">{designData.designParams?.workfaceWidth}m</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-1 border-b border-gray-700/50 bg-gradient-to-t from-blue-900/20 to-transparent p-4 flex flex-col">
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
-              <BarChart3 size={14} className="text-blue-400"/> 设计指标
-            </h4>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 hover:border-blue-500/50 transition-colors group">
-                <div className="text-[10px] text-gray-400 uppercase mb-1">平均评分</div>
-                <div className="text-2xl font-black text-white group-hover:text-blue-400 transition-colors">{designData.stats?.avgScore?.toFixed(1) || 0}</div>
-              </div>
-              <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 hover:border-amber-500/50 transition-colors group">
-                <div className="text-[10px] text-gray-400 uppercase mb-1 flex items-center gap-1"><Hammer size={10}/> 有效工作面</div>
-                <div className="text-xl font-bold text-white group-hover:text-amber-400 transition-colors">{designData.stats?.validCount || 0}<span className="text-xs ml-0.5 opacity-50">个</span></div>
-              </div>
-              <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 hover:border-emerald-500/50 transition-colors group">
-                <div className="text-[10px] text-gray-400 uppercase mb-1 flex items-center gap-1"><ShieldCheck size={10}/> 合规率</div>
-                <div className="text-xl font-bold text-emerald-400">
-                  {designData.stats?.count > 0 ? Math.round((designData.stats?.validCount || 0) / designData.stats?.count * 100) : 0}%
-                </div>
-              </div>
-              <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 hover:border-purple-500/50 transition-colors group">
-                <div className="text-[10px] text-gray-400 uppercase mb-1 flex items-center gap-1"><Wind size={10}/> 巷道数</div>
-                <div className="text-xl font-bold text-gray-200 group-hover:text-purple-400">{designData.roadways?.length || 0}</div>
-              </div>
-            </div>
-            
-            {/* 智能评价 (填充剩余空间) */}
-            <div className="mt-auto pt-4 border-t border-gray-700/30">
-               <h5 className="text-[10px] font-bold text-gray-400 uppercase mb-3 flex items-center gap-2">
-                 <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div> 智能评价
-               </h5>
-               
-               <div className="space-y-3">
-                 {/* 综合建议 */}
-                 <div className="text-xs text-gray-300 leading-relaxed bg-gray-800/30 p-3 rounded border border-gray-700/50">
-                    {designData.stats?.avgScore >= 80 ? (
-                      <span className="text-emerald-300">设计方案优秀。各项指标均衡，资源回收率高，建议按此方案实施。</span>
-                    ) : designData.stats?.avgScore >= 60 ? (
-                      <span className="text-blue-300">设计方案良好。符合基本规范，建议进一步优化工作面长度以提升评分。</span>
-                    ) : (
-                      <span className="text-amber-400">设计方案有待改进。建议调整开采方向或减少无效区域。</span>
-                    )}
-                 </div>
-
-                 {/* 关键指标进度条 */}
-                 <div className="space-y-2">
-                    <div className="flex justify-between text-[9px] text-gray-400 mb-0.5">
-                      <span>资源回收率</span>
-                      <span className="text-emerald-400 font-mono">
-                        {designData.stats?.count > 0 ? Math.round((designData.stats?.validCount || 0) / designData.stats?.count * 95) : 0}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-emerald-500 rounded-full transition-all duration-1000" 
-                        style={{width: `${designData.stats?.count > 0 ? Math.round((designData.stats?.validCount || 0) / designData.stats?.count * 95) : 0}%`}}
-                      ></div>
-                    </div>
-
-                    <div className="flex justify-between text-[9px] text-gray-400 mb-0.5 mt-2">
-                      <span>安全系数</span>
-                      <span className="text-blue-400 font-mono">9.2</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full w-[92%]"></div>
-                    </div>
-                 </div>
-
-                 {/* 优化建议列表 */}
-                 <div className="bg-gray-800/20 p-2 rounded border border-gray-700/30">
-                    <div className="text-[9px] text-gray-500 mb-1 uppercase">优化建议</div>
-                    <ul className="space-y-1">
-                      <li className="text-[10px] text-gray-400 flex items-start gap-1.5">
-                        <span className="text-blue-500 mt-0.5">•</span>
-                        <span>建议增加工作面长度以提高单产</span>
-                      </li>
-                      <li className="text-[10px] text-gray-400 flex items-start gap-1.5">
-                        <span className="text-blue-500 mt-0.5">•</span>
-                        <span>注意 {designData.designParams?.pillarWidth}m 煤柱区域的应力集中</span>
-                      </li>
-                    </ul>
-                 </div>
-               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 无设计数据时显示提示 */}
-      {!(activeTab === 'synthesis' && designData) && (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full border-2 border-dashed border-gray-700 flex items-center justify-center">
-              <BarChart3 size={28} className="text-gray-600" />
-            </div>
-            <h3 className="text-sm font-bold text-gray-400 mb-2">设计分析</h3>
-            <p className="text-xs text-gray-500">
-              {boreholes.length === 0
-                ? '请先导入数据'
-                : '点击"生成最优设计"查看设计结果'}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* 后端日志 */}
-      <LogPanel logs={systemLog} />
-    </aside>
+    <RightPanel
+      activeTab={activeTab}
+      designData={designData}
+      selectedWorkface={selectedWorkface}
+      boreholes={boreholes}
+      systemLog={systemLog}
+    />
     </main>
   </div>
   );
