@@ -1,0 +1,63 @@
+2025-12-08 13:14:39 | INFO     | mining_design | <module>:78 | ==================================================
+2025-12-08 13:14:39 | INFO     | mining_design | <module>:79 | Mining Design System Backend 启动中...
+2025-12-08 13:14:39 | INFO     | mining_design | <module>:80 | 允许的CORS域名: ['http://localhost:5173', 'http://127.0.0.1:5173']
+2025-12-08 13:14:39 | INFO     | mining_design | <module>:81 | ==================================================
+2025-12-08 13:14:48 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 500 (15ms)
+2025-12-08 13:20:10 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 500 (11ms)
+2025-12-08 14:30:34 | INFO     | mining_design | <module>:78 | ==================================================
+2025-12-08 14:30:34 | INFO     | mining_design | <module>:79 | Mining Design System Backend 启动中...
+2025-12-08 14:30:34 | INFO     | mining_design | <module>:80 | 允许的CORS域名: ['http://localhost:5173', 'http://127.0.0.1:5173']
+2025-12-08 14:30:34 | INFO     | mining_design | <module>:81 | ==================================================
+2025-12-08 14:30:49 | INFO     | mining_design | log_api_request:85 | POST /api/boundary/ -> 405 (0ms)
+2025-12-08 14:31:39 | INFO     | mining_design | log_api_request:85 | POST /api/boreholes/ -> 200 (12ms)
+2025-12-08 14:31:56 | INFO     | mining_design | log_api_request:85 | POST /api/boreholes/ -> 200 (10ms)
+2025-12-08 14:32:52 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 500 (11ms)
+2025-12-08 14:33:23 | INFO     | mining_design | <module>:78 | ==================================================
+2025-12-08 14:33:23 | INFO     | mining_design | <module>:79 | Mining Design System Backend 启动中...
+2025-12-08 14:33:23 | INFO     | mining_design | <module>:80 | 允许的CORS域名: ['http://localhost:5173', 'http://127.0.0.1:5173']
+2025-12-08 14:33:23 | INFO     | mining_design | <module>:81 | ==================================================
+2025-12-08 14:33:37 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 500 (7ms)
+2025-12-08 14:33:57 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 500 (7ms)
+2025-12-08 14:35:45 | INFO     | mining_design | <module>:78 | ==================================================
+2025-12-08 14:35:45 | INFO     | mining_design | <module>:79 | Mining Design System Backend 启动中...
+2025-12-08 14:35:45 | INFO     | mining_design | <module>:80 | 允许的CORS域名: ['http://localhost:5173', 'http://127.0.0.1:5173']
+2025-12-08 14:35:45 | INFO     | mining_design | <module>:81 | ==================================================
+2025-12-08 14:35:56 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 200 (12ms)
+2025-12-08 14:45:56 | INFO     | mining_design | <module>:78 | ==================================================
+2025-12-08 14:45:56 | INFO     | mining_design | <module>:79 | Mining Design System Backend 启动中...
+2025-12-08 14:45:56 | INFO     | mining_design | <module>:80 | 允许的CORS域名: ['http://localhost:5173', 'http://127.0.0.1:5173']
+2025-12-08 14:45:56 | INFO     | mining_design | <module>:81 | ==================================================
+2025-12-08 14:47:51 | INFO     | mining_design | log_api_request:85 | GET /api/boreholes/ -> 200 (2ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/boreholes/ -> 200 (2ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/boundary/ -> 200 (3ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/boreholes/ -> 200 (2ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/boundary/ -> 200 (1ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/score/ -> 200 (0ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (22ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (10ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (68ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (62ms)
+2025-12-08 14:48:22 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (59ms)
+2025-12-08 14:48:24 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (11ms)
+2025-12-08 14:48:24 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/design/ -> 200 (0ms)
+2025-12-08 14:48:24 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (60ms)
+2025-12-08 14:48:24 | INFO     | mining_design | log_design_operation:93 | [设计] 开始布局 | 采区面积=255250m², 推进长度=200.0, 煤柱宽度=20.0
+2025-12-08 14:48:24 | INFO     | mining_design | log_design_operation:93 | [设计] 布局完成 | 工作面=2, 有效=2, 巷道=8
+2025-12-08 14:48:24 | INFO     | mining_design | log_api_request:85 | POST /api/design/ -> 200 (40ms)
+2025-12-08 14:48:24 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (57ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | POST /api/upload/boundary -> 200 (22ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | POST /api/upload/borehole-coordinates -> 200 (4ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | POST /api/boreholes/batch-upload -> 200 (45ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/boreholes/merge-with-coordinates -> 200 (0ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | POST /api/boreholes/merge-with-coordinates -> 200 (29ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/geology/ -> 200 (0ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | POST /api/geology/ -> 200 (37ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (61ms)
+2025-12-08 14:48:42 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (64ms)
+2025-12-08 14:48:43 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (27ms)
+2025-12-08 14:48:43 | INFO     | mining_design | log_design_operation:93 | [设计] 开始布局 | 采区面积=5872308m², 推进长度=200.0, 煤柱宽度=20.0
+2025-12-08 14:48:43 | INFO     | mining_design | log_design_operation:93 | [设计] 布局完成 | 工作面=7, 有效=7, 巷道=23
+2025-12-08 14:48:43 | INFO     | mining_design | log_api_request:85 | POST /api/design/ -> 200 (25ms)
+2025-12-08 14:48:43 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (61ms)
+2025-12-08 14:48:44 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (67ms)
+2025-12-08 14:48:51 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 200 (33ms)

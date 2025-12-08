@@ -530,15 +530,28 @@ async def export_dxf():
                         dxfattribs={'layer': '文字标注', 'height': 4}
                     ).set_placement((min_x + 20, info_y - i * 8))
 
-        # 导出到字节流 - 使用正确的编码方式
+        # 导出到临时文件再读取（ezdxf不支持直接写入BytesIO）
         from datetime import datetime
-        byte_stream = BytesIO()
-        doc.write(byte_stream, fmt='asc')  # ASCII格式，兼容性更好
-        byte_stream.seek(0)
+        import tempfile
+        import os
 
         # 生成带时间戳的文件名
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"mining_design_{timestamp}.dxf"
+
+        # 使用临时文件
+        temp_path = os.path.join(tempfile.gettempdir(), filename)
+        doc.saveas(temp_path)
+
+        # 读取文件内容
+        with open(temp_path, 'rb') as f:
+            file_content = f.read()
+
+        # 删除临时文件
+        os.remove(temp_path)
+
+        # 创建BytesIO流
+        byte_stream = BytesIO(file_content)
 
         return StreamingResponse(
             byte_stream,

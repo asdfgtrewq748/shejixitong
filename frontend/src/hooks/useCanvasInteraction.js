@@ -271,6 +271,7 @@ const useCanvasInteraction = ({
   return {
     // 状态
     scale,
+    setScale,
     mousePos,
     panOffset,
     setPanOffset,
@@ -283,6 +284,7 @@ const useCanvasInteraction = ({
     selectedWorkface,
     setSelectedWorkface,
     viewInitialized,
+    setViewInitialized,
     // 事件处理
     handleCanvasMouseMove,
     handleCanvasClick,
