@@ -61,3 +61,11 @@
 2025-12-08 14:48:43 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (61ms)
 2025-12-08 14:48:44 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (67ms)
 2025-12-08 14:48:51 | INFO     | mining_design | log_api_request:85 | GET /api/design/export/dxf -> 200 (33ms)
+2025-12-08 15:56:06 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/score/ -> 200 (0ms)
+2025-12-08 15:56:06 | INFO     | mining_design | log_api_request:85 | POST /api/score/ -> 200 (26ms)
+2025-12-08 15:56:06 | INFO     | mining_design | log_api_request:85 | OPTIONS /api/design/ -> 200 (0ms)
+2025-12-08 15:56:06 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (64ms)
+2025-12-08 15:56:06 | INFO     | mining_design | log_design_operation:93 | [设计] 开始布局 | 采区面积=5872308m², 推进长度=200.0, 煤柱宽度=20.0
+2025-12-08 15:56:06 | INFO     | mining_design | log_design_operation:93 | [设计] 布局完成 | 工作面=7, 有效=7, 巷道=23
+2025-12-08 15:56:06 | INFO     | mining_design | log_api_request:85 | POST /api/design/ -> 200 (16ms)
+2025-12-08 15:56:06 | INFO     | mining_design | log_api_request:85 | GET /api/geology/layers -> 200 (62ms)
