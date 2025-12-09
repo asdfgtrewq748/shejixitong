@@ -296,5 +296,63 @@ export async function exportDesignDXF() {
   document.body.removeChild(a);
 }
 
+// ==================== 工作面接续优化 API ====================
+
+/**
+ * 获取训练状态
+ */
+export async function getSuccessionTrainingStatus() {
+  return apiGet('/succession/status');
+}
+
+/**
+ * 开始训练接续优化模型
+ */
+export async function startSuccessionTraining(panels, options = {}) {
+  return apiPost('/succession/train', {
+    panels,
+    n_episodes: options.n_episodes || 500,
+    monthly_target: options.monthly_target || 100000,
+    max_steps: options.max_steps || 120,
+  });
+}
+
+/**
+ * 使用RL模型优化接续方案
+ */
+export async function optimizeSuccession(panels, options = {}) {
+  return apiPost('/succession/optimize', {
+    panels,
+    monthly_target: options.monthly_target || 100000,
+  });
+}
+
+/**
+ * 快速优化（使用基线策略，不需要训练）
+ */
+export async function quickOptimizeSuccession(panels, strategy = 'greedy') {
+  return apiPost('/succession/quick-optimize', {
+    panels,
+    strategy,
+  });
+}
+
+/**
+ * 获取演示优化结果
+ */
+export async function getDemoSuccession() {
+  return apiGet('/succession/demo');
+}
+
+/**
+ * 比较不同策略的效果
+ */
+export async function compareSuccessionStrategies(panels, options = {}) {
+  return apiPost('/succession/compare-strategies', {
+    panels,
+    monthly_target: options.monthly_target || 100000,
+  });
+}
+
 // 导出ApiError类供外部使用
 export { ApiError };

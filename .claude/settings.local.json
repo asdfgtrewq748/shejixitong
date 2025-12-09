@@ -18,7 +18,8 @@
       "Bash(node:*)",
       "Bash(npm run build:*)",
       "Bash(npm start)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []

@@ -8,3 +8,5 @@ networkx
 python-multipart
 pydantic
 ezdxf
+# 强化学习相关（可选，用于高级训练）
+# torch  # 如需PyTorch版本的神经网络，取消注释

@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  Cpu, BarChart3, ShieldCheck, Wind, Hammer
+  Cpu, BarChart3, ShieldCheck, Wind, Hammer, Layers, ChevronDown, ChevronUp
 } from 'lucide-react';
 import LogPanel from './LogPanel';
+import SuccessionPanel from './SuccessionPanel';
 
 /**
  * 右侧面板组件 - 包含设计结果统计和日志
@@ -14,6 +15,8 @@ const RightPanel = ({
   boreholes,
   systemLog,
 }) => {
+  const [showSuccession, setShowSuccession] = useState(false);
+
   return (
     <aside className="w-80 glass-panel rounded-xl flex flex-col overflow-hidden animate-[slideInRight_0.5s_ease-out]">
       {/* 设计依据 & 预计指标 (条件渲染) */}
@@ -154,9 +157,31 @@ const RightPanel = ({
                       </li>
                     </ul>
                  </div>
+
+                 {/* 接续优化入口 */}
+                 <button
+                   onClick={() => setShowSuccession(!showSuccession)}
+                   className="w-full mt-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white py-2 px-3 rounded-lg flex items-center justify-between text-xs font-medium transition-all"
+                 >
+                   <span className="flex items-center gap-2">
+                     <Layers size={14} />
+                     工作面接续优化
+                   </span>
+                   {showSuccession ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                 </button>
                </div>
             </div>
           </div>
+
+          {/* 接续优化面板 */}
+          {showSuccession && (
+            <div className="border-t border-gray-700/50 p-3">
+              <SuccessionPanel
+                panels={designData.panels || []}
+                onClose={() => setShowSuccession(false)}
+              />
+            </div>
+          )}
         </div>
       )}
 

@@ -9,3 +9,4 @@ export { default as LeftSidebar } from './LeftSidebar';
 export { default as RightPanel } from './RightPanel';
 export { default as ErrorBoundary } from './ErrorBoundary';
 export { default as GeoModelPreview } from './GeoModelPreview';
+export { default as SuccessionPanel } from './SuccessionPanel';
