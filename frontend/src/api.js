@@ -354,5 +354,67 @@ export async function compareSuccessionStrategies(panels, options = {}) {
   });
 }
 
+/**
+ * 生成详细接续计划
+ * 返回包含工序分解、时间节点、关键路径等详细信息
+ */
+export async function generateDetailedPlan(panels, options = {}) {
+  return apiPost('/succession/detailed-plan', {
+    panels,
+    monthly_target: options.monthly_target || 100000,
+    start_date: options.start_date || null,
+  });
+}
+
+/**
+ * 获取单个工作面的详细时间表
+ */
+export async function getWorkfaceSchedule(workfaceId, panels, options = {}) {
+  return apiPost(`/succession/workface-schedule/${workfaceId}`, {
+    panels,
+    monthly_target: options.monthly_target || 100000,
+    start_date: options.start_date || null,
+  });
+}
+
+/**
+ * 使用指定算法训练模型
+ * @param {Array} panels - 工作面数据
+ * @param {string} algorithm - 算法名称: ppo, a2c, sac, td3
+ * @param {Object} options - 训练选项
+ */
+export async function trainWithAlgorithm(panels, algorithm = 'ppo', options = {}) {
+  return apiPost('/succession/train-algorithm', {
+    panels,
+    algorithm,
+    n_episodes: options.n_episodes || 500,
+    monthly_target: options.monthly_target || 100000,
+  });
+}
+
+/**
+ * 获取采矿规程约束配置
+ */
+export async function getMiningRegulations() {
+  return apiGet('/succession/mining-regulations');
+}
+
+/**
+ * 验证接续方案是否符合规程
+ */
+export async function validateSuccessionPlan(panels, options = {}) {
+  return apiPost('/succession/validate-plan', {
+    panels,
+    monthly_target: options.monthly_target || 100000,
+  });
+}
+
+/**
+ * 获取可用的强化学习算法信息
+ */
+export async function getAlgorithmInfo() {
+  return apiGet('/succession/algorithm-info');
+}
+
 // 导出ApiError类供外部使用
 export { ApiError };

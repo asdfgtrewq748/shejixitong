@@ -11,12 +11,21 @@ import {
   CheckCircle,
   Clock,
   Zap,
+  FileText,
+  ChevronDown,
+  ChevronRight,
+  Info,
+  Shield,
+  Target,
 } from 'lucide-react';
 import {
   quickOptimizeSuccession,
   startSuccessionTraining,
   getSuccessionTrainingStatus,
   compareSuccessionStrategies,
+  generateDetailedPlan,
+  trainWithAlgorithm,
+  getAlgorithmInfo,
 } from '../api';
 
 /**
@@ -29,7 +38,11 @@ export default function SuccessionPanel({ panels = [], onClose }) {
   const [strategy, setStrategy] = useState('greedy');
   const [trainingStatus, setTrainingStatus] = useState(null);
   const [comparison, setComparison] = useState(null);
-  const [activeTab, setActiveTab] = useState('quick'); // quick, train, compare
+  const [activeTab, setActiveTab] = useState('quick'); // quick, detailed, train, compare
+  const [detailedPlan, setDetailedPlan] = useState(null);
+  const [selectedWorkface, setSelectedWorkface] = useState(null);
+  const [algorithm, setAlgorithm] = useState('ppo');
+  const [expandedSections, setExpandedSections] = useState({});
 
   // 转换panels数据格式
   const formatPanels = useCallback(() => {
@@ -127,6 +140,60 @@ export default function SuccessionPanel({ panels = [], onClose }) {
     }
   };
 
+  // 生成详细计划
+  const handleDetailedPlan = async () => {
+    if (panels.length === 0) {
+      setError('请先生成工作面设计');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formattedPanels = formatPanels();
+      const res = await generateDetailedPlan(formattedPanels, {
+        start_date: new Date().toISOString().split('T')[0],
+      });
+      setDetailedPlan(res.detailed_plan);
+    } catch (err) {
+      setError(err.message || '生成详细计划失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 使用指定算法训练
+  const handleAlgorithmTraining = async () => {
+    if (panels.length === 0) {
+      setError('请先生成工作面设计');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formattedPanels = formatPanels();
+      await trainWithAlgorithm(formattedPanels, algorithm, {
+        n_episodes: 500,
+        monthly_target: 100000,
+      });
+      pollTrainingStatus();
+    } catch (err) {
+      setError(err.message || '启动训练失败');
+      setLoading(false);
+    }
+  };
+
+  // 切换展开/折叠
+  const toggleSection = (sectionId) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [sectionId]: !prev[sectionId]
+    }));
+  };
+
   // 策略名称映射
   const strategyNames = {
     greedy: '贪心策略',
@@ -134,9 +201,17 @@ export default function SuccessionPanel({ panels = [], onClose }) {
     score_based: '评分优先',
   };
 
+  // 算法名称映射
+  const algorithmNames = {
+    ppo: 'PPO (近端策略优化)',
+    a2c: 'A2C (优势演员-评论家)',
+    sac: 'SAC (软演员-评论家)',
+    td3: 'TD3 (孪生延迟DDPG)',
+  };
+
   return (
-    <div className="bg-gray-800 rounded-lg p-4 text-white">
-      <div className="flex items-center justify-between mb-4">
+    <div className="w-full max-w-5xl mx-auto bg-gray-900/70 border border-gray-700 rounded-xl p-4 sm:p-6 text-white shadow-lg">
+      <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <h3 className="text-lg font-semibold flex items-center gap-2">
           <Layers className="w-5 h-5 text-blue-400" />
           工作面接续优化
@@ -144,7 +219,7 @@ export default function SuccessionPanel({ panels = [], onClose }) {
         {onClose && (
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white"
+            className="text-gray-400 hover:text-white transition-colors"
           >
             ×
           </button>
@@ -152,44 +227,55 @@ export default function SuccessionPanel({ panels = [], onClose }) {
       </div>
 
       {/* 标签页 */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4 text-sm sm:text-base">
         <button
           onClick={() => setActiveTab('quick')}
-          className={`px-3 py-1.5 rounded text-sm ${
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
             activeTab === 'quick'
               ? 'bg-blue-600 text-white'
               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
-          <Zap className="w-4 h-4 inline mr-1" />
+          <Zap className="w-4 h-4" />
           快速优化
         </button>
         <button
+          onClick={() => setActiveTab('detailed')}
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
+            activeTab === 'detailed'
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          详细计划
+        </button>
+        <button
           onClick={() => setActiveTab('train')}
-          className={`px-3 py-1.5 rounded text-sm ${
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
             activeTab === 'train'
               ? 'bg-blue-600 text-white'
               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
-          <TrendingUp className="w-4 h-4 inline mr-1" />
+          <TrendingUp className="w-4 h-4" />
           RL训练
         </button>
         <button
           onClick={() => setActiveTab('compare')}
-          className={`px-3 py-1.5 rounded text-sm ${
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
             activeTab === 'compare'
               ? 'bg-blue-600 text-white'
               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
-          <BarChart3 className="w-4 h-4 inline mr-1" />
+          <BarChart3 className="w-4 h-4" />
           策略对比
         </button>
       </div>
 
       {/* 工作面信息 */}
-      <div className="bg-gray-700 rounded p-3 mb-4">
+      <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-3 sm:p-4 mb-4">
         <div className="text-sm text-gray-400 mb-1">当前工作面</div>
         <div className="text-lg font-semibold">
           {panels.length > 0 ? `${panels.length} 个工作面` : '未生成设计'}
@@ -198,7 +284,7 @@ export default function SuccessionPanel({ panels = [], onClose }) {
 
       {/* 错误提示 */}
       {error && (
-        <div className="bg-red-900/50 border border-red-500 rounded p-3 mb-4 flex items-center gap-2">
+        <div className="bg-red-900/50 border border-red-500 rounded p-3 mb-4 flex items-center gap-2 text-sm">
           <AlertTriangle className="w-5 h-5 text-red-400" />
           <span className="text-red-200">{error}</span>
         </div>
@@ -206,13 +292,13 @@ export default function SuccessionPanel({ panels = [], onClose }) {
 
       {/* 快速优化面板 */}
       {activeTab === 'quick' && (
-        <div>
-          <div className="mb-4">
-            <label className="block text-sm text-gray-400 mb-2">选择策略</label>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="block text-sm text-gray-400">选择策略</label>
             <select
               value={strategy}
               onChange={(e) => setStrategy(e.target.value)}
-              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
             >
               <option value="greedy">贪心策略 - 优先储量大的工作面</option>
               <option value="sequential">顺序策略 - 按编号顺序开采</option>
@@ -223,9 +309,7 @@ export default function SuccessionPanel({ panels = [], onClose }) {
           <button
             onClick={handleQuickOptimize}
             disabled={loading || panels.length === 0}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600
-                       disabled:cursor-not-allowed text-white py-2 rounded flex
-                       items-center justify-center gap-2"
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded flex items-center justify-center gap-2 shadow-sm transition-colors"
           >
             {loading ? (
               <>
@@ -244,10 +328,10 @@ export default function SuccessionPanel({ panels = [], onClose }) {
 
       {/* RL训练面板 */}
       {activeTab === 'train' && (
-        <div>
-          <div className="bg-gray-700 rounded p-3 mb-4">
+        <div className="space-y-4">
+          <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-3 sm:p-4">
             <div className="text-sm text-gray-400 mb-2">强化学习训练</div>
-            <p className="text-xs text-gray-500 mb-3">
+            <p className="text-xs text-gray-500 mb-3 leading-relaxed">
               使用PPO算法训练智能体，自动学习最优接续策略。
               训练需要一定时间，但能获得更好的优化效果。
             </p>
@@ -260,7 +344,7 @@ export default function SuccessionPanel({ panels = [], onClose }) {
                 </div>
                 <div className="w-full bg-gray-600 rounded-full h-2">
                   <div
-                    className="bg-blue-500 h-2 rounded-full transition-all"
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-500"
                     style={{ width: `${trainingStatus.progress || 0}%` }}
                   />
                 </div>
@@ -275,9 +359,7 @@ export default function SuccessionPanel({ panels = [], onClose }) {
           <button
             onClick={handleStartTraining}
             disabled={loading || panels.length === 0}
-            className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600
-                       disabled:cursor-not-allowed text-white py-2 rounded flex
-                       items-center justify-center gap-2"
+            className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded flex items-center justify-center gap-2 shadow-sm transition-colors"
           >
             {loading ? (
               <>
@@ -296,13 +378,11 @@ export default function SuccessionPanel({ panels = [], onClose }) {
 
       {/* 策略对比面板 */}
       {activeTab === 'compare' && (
-        <div>
+        <div className="space-y-4">
           <button
             onClick={handleCompare}
             disabled={loading || panels.length === 0}
-            className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600
-                       disabled:cursor-not-allowed text-white py-2 rounded flex
-                       items-center justify-center gap-2 mb-4"
+            className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded flex items-center justify-center gap-2 shadow-sm transition-colors"
           >
             {loading ? (
               <>
@@ -320,8 +400,11 @@ export default function SuccessionPanel({ panels = [], onClose }) {
           {comparison && (
             <div className="space-y-3">
               {Object.entries(comparison).map(([key, value]) => (
-                <div key={key} className="bg-gray-700 rounded p-3">
-                  <div className="font-medium mb-2">{strategyNames[key]}</div>
+                <div key={key} className="bg-gray-800/70 border border-gray-700 rounded-lg p-3">
+                  <div className="font-medium mb-2 flex items-center justify-between">
+                    <span>{strategyNames[key]}</span>
+                    <span className="text-xs text-gray-400">Score: {value.summary?.score?.toFixed?.(1) || '--'}</span>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
                       <span className="text-gray-400">总工期:</span>
@@ -347,29 +430,71 @@ export default function SuccessionPanel({ panels = [], onClose }) {
         </div>
       )}
 
+      {/* 详细计划面板 */}
+      {activeTab === 'detailed' && (
+        <div className="space-y-4">
+          <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-3 sm:p-4">
+            <div className="text-sm text-gray-400 mb-2">详细接续计划</div>
+            <p className="text-xs text-gray-500 mb-3 leading-relaxed">
+              生成贴近现场的详细计划，包括工序分解、时间节点、日/周/月计划、关键路径分析、风险评估等。
+              基于《煤矿安全规程》等标准。
+            </p>
+          </div>
+
+          <button
+            onClick={handleDetailedPlan}
+            disabled={loading || panels.length === 0}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded flex items-center justify-center gap-2 shadow-sm transition-colors"
+          >
+            {loading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                生成中...
+              </>
+            ) : (
+              <>
+                <FileText className="w-4 h-4" />
+                生成详细计划
+              </>
+            )}
+          </button>
+
+          {/* 详细计划结果 */}
+          {detailedPlan && (
+            <DetailedPlanView
+              plan={detailedPlan}
+              expandedSections={expandedSections}
+              toggleSection={toggleSection}
+              selectedWorkface={selectedWorkface}
+              setSelectedWorkface={setSelectedWorkface}
+            />
+          )}
+        </div>
+      )}
+
       {/* 优化结果 */}
       {result && (
-        <div className="mt-4 border-t border-gray-700 pt-4">
+        <div className="mt-5 bg-gray-900/60 border border-gray-700/80 rounded-xl p-4 sm:p-5">
           <h4 className="font-medium mb-3 flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-green-400" />
             优化结果
           </h4>
 
           {/* 汇总信息 */}
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="bg-gray-700 rounded p-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="bg-gray-800/70 border border-gray-700 rounded p-3">
               <div className="text-xs text-gray-400">总工期</div>
               <div className="text-lg font-semibold">
                 {result.summary?.total_months || 0} 月
               </div>
             </div>
-            <div className="bg-gray-700 rounded p-3">
+            <div className="bg-gray-800/70 border border-gray-700 rounded p-3">
               <div className="text-xs text-gray-400">完成工作面</div>
               <div className="text-lg font-semibold">
                 {result.summary?.completed_workfaces || 0} / {result.summary?.total_workfaces || 0}
               </div>
             </div>
-            <div className="bg-gray-700 rounded p-3 col-span-2">
+            <div className="bg-gray-800/70 border border-gray-700 rounded p-3 col-span-1 sm:col-span-2">
               <div className="text-xs text-gray-400">累计产量</div>
               <div className="text-lg font-semibold">
                 {((result.summary?.cumulative_production || 0) / 10000).toFixed(1)} 万吨
@@ -379,7 +504,7 @@ export default function SuccessionPanel({ panels = [], onClose }) {
 
           {/* 甘特图 */}
           {result.gantt_data && result.gantt_data.length > 0 && (
-            <div className="bg-gray-700 rounded p-3">
+            <div className="bg-gray-900/50 border border-gray-700 rounded p-3">
               <div className="text-sm font-medium mb-2 flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
                 接续时序图
@@ -392,29 +517,29 @@ export default function SuccessionPanel({ panels = [], onClose }) {
           {result.plan?.workface_schedule && (
             <div className="mt-3">
               <div className="text-sm font-medium mb-2">工作面时间表</div>
-              <div className="max-h-48 overflow-y-auto space-y-1">
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-gray-600">
                 {Object.entries(result.plan.workface_schedule).map(([id, schedule]) => (
                   <div
                     key={id}
-                    className="flex items-center justify-between bg-gray-700 rounded px-3 py-2 text-sm"
+                    className="flex items-center justify-between bg-gray-800/70 border border-gray-700 rounded px-3 py-2 text-xs sm:text-sm"
                   >
-                    <span className="font-medium">{id}</span>
-                    <div className="flex items-center gap-4 text-gray-400">
-                      <span>
-                        <Clock className="w-3 h-3 inline mr-1" />
+                    <span className="font-medium text-gray-200">{id}</span>
+                    <div className="flex items-center gap-3 text-gray-400">
+                      <span className="inline-flex items-center gap-1" title="准备开始时间">
+                        <Clock className="w-3 h-3" />
                         准备: {schedule.prep_start ?? '-'}月
                       </span>
-                      <span>
-                        <Play className="w-3 h-3 inline mr-1" />
+                      <span className="inline-flex items-center gap-1" title="回采开始时间">
+                        <Play className="w-3 h-3" />
                         回采: {schedule.mining_start ?? '-'}月
                       </span>
                       <span
-                        className={`px-2 py-0.5 rounded text-xs ${
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
                           schedule.status === '已采'
-                            ? 'bg-green-600'
+                            ? 'bg-green-900/60 text-green-300 border-green-700'
                             : schedule.status === '在采'
-                            ? 'bg-blue-600'
-                            : 'bg-gray-600'
+                            ? 'bg-blue-900/60 text-blue-300 border-blue-700'
+                            : 'bg-gray-700 text-gray-300 border-gray-600'
                         }`}
                       >
                         {schedule.status}
@@ -447,11 +572,11 @@ function GanttChart({ data }) {
 
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[400px]">
+      <div className="min-w-[520px] sm:min-w-full space-y-2">
         {/* 时间轴 */}
-        <div className="flex mb-1 text-xs text-gray-500">
-          <div className="w-20 flex-shrink-0" />
-          <div className="flex-1 flex justify-between">
+        <div className="flex mb-2 text-[11px] sm:text-xs text-gray-500">
+          <div className="w-24 flex-shrink-0" />
+          <div className="flex-1 grid grid-cols-5 text-center">
             {[0, Math.floor(totalMonths / 4), Math.floor(totalMonths / 2),
               Math.floor(totalMonths * 3 / 4), totalMonths].map((m) => (
               <span key={m}>{minStart + m}月</span>
@@ -463,16 +588,16 @@ function GanttChart({ data }) {
         {workfaces.map((wf) => {
           const wfData = data.filter((d) => d.workface === wf);
           return (
-            <div key={wf} className="flex items-center mb-1">
-              <div className="w-20 flex-shrink-0 text-xs truncate pr-2">{wf}</div>
-              <div className="flex-1 h-6 bg-gray-600 rounded relative">
+            <div key={wf} className="flex items-center gap-2 mb-1">
+              <div className="w-24 flex-shrink-0 text-[11px] sm:text-xs truncate pr-2 text-gray-200">{wf}</div>
+              <div className="flex-1 h-7 bg-gray-700/80 rounded relative">
                 {wfData.map((item, idx) => {
                   const left = ((item.start - minStart) / totalMonths) * 100;
                   const width = ((item.end - item.start) / totalMonths) * 100;
                   return (
                     <div
                       key={idx}
-                      className={`absolute h-full rounded ${
+                      className={`absolute h-full rounded shadow-inner ${
                         item.type === 'preparation'
                           ? 'bg-yellow-500'
                           : 'bg-green-500'
@@ -491,14 +616,375 @@ function GanttChart({ data }) {
         })}
 
         {/* 图例 */}
-        <div className="flex gap-4 mt-2 text-xs">
-          <div className="flex items-center gap-1">
+        <div className="flex gap-4 mt-3 text-[11px] sm:text-xs text-gray-300">
+          <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 bg-yellow-500 rounded" />
             <span>准备</span>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 bg-green-500 rounded" />
             <span>回采</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * 详细计划视图组件
+ */
+function DetailedPlanView({ plan, expandedSections, toggleSection, selectedWorkface, setSelectedWorkface }) {
+  if (!plan) return null;
+
+  const { summary, workface_plans, timeline, critical_path, risk_analysis, gantt_data } = plan;
+
+  return (
+    <div className="space-y-4">
+      {/* 汇总信息 */}
+      <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-4">
+        <h4 className="font-medium mb-3 flex items-center gap-2">
+          <Target className="w-4 h-4 text-blue-400" />
+          计划汇总
+        </h4>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-xs text-gray-400">工作面数</div>
+            <div className="text-lg font-semibold">{summary?.total_workfaces || 0}</div>
+          </div>
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-xs text-gray-400">总工期</div>
+            <div className="text-lg font-semibold">{summary?.total_months || 0} 月</div>
+          </div>
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-xs text-gray-400">总产量</div>
+            <div className="text-lg font-semibold">{summary?.total_output_wan_ton || 0} 万吨</div>
+          </div>
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-xs text-gray-400">月均产量</div>
+            <div className="text-lg font-semibold">{((summary?.average_monthly_output || 0) / 10000).toFixed(1)} 万吨</div>
+          </div>
+        </div>
+        <div className="mt-3 text-xs text-gray-400">
+          计划周期: {summary?.start_date} ~ {summary?.end_date}
+        </div>
+      </div>
+
+      {/* 开采顺序 */}
+      <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-4">
+        <h4 className="font-medium mb-3 flex items-center gap-2">
+          <Layers className="w-4 h-4 text-green-400" />
+          开采顺序
+        </h4>
+        <div className="flex flex-wrap gap-2">
+          {(plan.succession_order || []).map((wfId, idx) => (
+            <button
+              key={wfId}
+              onClick={() => setSelectedWorkface(selectedWorkface === wfId ? null : wfId)}
+              className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                selectedWorkface === wfId
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {idx + 1}. {wfId}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 选中工作面详情 */}
+      {selectedWorkface && workface_plans?.[selectedWorkface] && (
+        <WorkfaceDetailView
+          wfPlan={workface_plans[selectedWorkface]}
+          expandedSections={expandedSections}
+          toggleSection={toggleSection}
+        />
+      )}
+
+      {/* 风险分析 */}
+      {risk_analysis && risk_analysis.risks?.length > 0 && (
+        <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-4">
+          <h4 className="font-medium mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-yellow-400" />
+            风险分析
+            <span className="ml-auto text-xs">
+              <span className="text-red-400">高风险: {risk_analysis.high_risk_count}</span>
+              <span className="mx-2 text-yellow-400">中风险: {risk_analysis.medium_risk_count}</span>
+            </span>
+          </h4>
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {risk_analysis.risks.map((risk, idx) => (
+              <div
+                key={idx}
+                className={`p-2 rounded text-sm border ${
+                  risk.level === 'high'
+                    ? 'bg-red-900/30 border-red-700'
+                    : risk.level === 'medium'
+                    ? 'bg-yellow-900/30 border-yellow-700'
+                    : 'bg-gray-700/50 border-gray-600'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-medium">{risk.workface}</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700">{risk.risk_type}</span>
+                </div>
+                <div className="text-xs text-gray-400">{risk.description}</div>
+                {risk.mitigation && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    措施: {risk.mitigation.join('; ')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 增强甘特图 */}
+      {gantt_data && gantt_data.length > 0 && (
+        <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-4">
+          <h4 className="font-medium mb-3 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-purple-400" />
+            接续时序图（详细）
+          </h4>
+          <EnhancedGanttChart data={gantt_data} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * 工作面详情视图
+ */
+function WorkfaceDetailView({ wfPlan, expandedSections, toggleSection }) {
+  if (!wfPlan) return null;
+
+  const { workface_id, basic_info, key_dates, duration, production, procedures, daily_plans } = wfPlan;
+
+  return (
+    <div className="bg-gray-800/70 border border-blue-600 rounded-lg p-4 space-y-4">
+      <h4 className="font-medium flex items-center gap-2">
+        <Info className="w-4 h-4 text-blue-400" />
+        {workface_id} 详细计划
+      </h4>
+
+      {/* 基本信息 */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">工作面长度</div>
+          <div className="font-medium">{basic_info?.length || 0} m</div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">推进长度</div>
+          <div className="font-medium">{basic_info?.advance_length || 0} m</div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">煤厚</div>
+          <div className="font-medium">{basic_info?.thickness?.toFixed(1) || 0} m</div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">储量</div>
+          <div className="font-medium">{basic_info?.reserves?.toFixed(1) || 0} 万吨</div>
+        </div>
+      </div>
+
+      {/* 关键时间节点 */}
+      <div>
+        <button
+          onClick={() => toggleSection(`${workface_id}-dates`)}
+          className="w-full flex items-center gap-2 text-sm font-medium mb-2"
+        >
+          {expandedSections[`${workface_id}-dates`] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <Clock className="w-4 h-4 text-yellow-400" />
+          关键时间节点
+        </button>
+        {expandedSections[`${workface_id}-dates`] && key_dates && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs ml-6">
+            <div className="flex justify-between p-2 bg-gray-900/50 rounded">
+              <span className="text-gray-400">准备开始</span>
+              <span>{key_dates.prep_start_date}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-gray-900/50 rounded">
+              <span className="text-gray-400">掘进完成</span>
+              <span>{key_dates.tunneling_end_date}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-gray-900/50 rounded">
+              <span className="text-gray-400">设备就绪</span>
+              <span>{key_dates.install_end_date}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-gray-900/50 rounded">
+              <span className="text-gray-400">回采开始</span>
+              <span className="text-green-400">{key_dates.mining_start_date}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-gray-900/50 rounded">
+              <span className="text-gray-400">初次来压</span>
+              <span className="text-yellow-400">{key_dates.first_weighting_date}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-gray-900/50 rounded">
+              <span className="text-gray-400">回采结束</span>
+              <span>{key_dates.mining_end_date}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 工序列表 */}
+      <div>
+        <button
+          onClick={() => toggleSection(`${workface_id}-procedures`)}
+          className="w-full flex items-center gap-2 text-sm font-medium mb-2"
+        >
+          {expandedSections[`${workface_id}-procedures`] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <Layers className="w-4 h-4 text-green-400" />
+          工序分解 ({procedures?.length || 0} 项)
+        </button>
+        {expandedSections[`${workface_id}-procedures`] && procedures && (
+          <div className="space-y-2 ml-6 max-h-64 overflow-y-auto">
+            {procedures.map((proc, idx) => (
+              <div key={idx} className="p-2 bg-gray-900/50 rounded text-xs">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium">{proc.name}</span>
+                  <span className="text-gray-400">{proc.duration_days} 天</span>
+                </div>
+                <div className="text-gray-500">{proc.start_date} ~ {proc.end_date}</div>
+                {proc.description && (
+                  <div className="text-gray-400 mt-1">{proc.description}</div>
+                )}
+                {proc.safety_measures?.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {proc.safety_measures.slice(0, 3).map((measure, i) => (
+                      <span key={i} className="px-1.5 py-0.5 bg-green-900/30 text-green-400 rounded text-[10px]">
+                        {measure}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 产量计划 */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">日推进</div>
+          <div className="font-medium">{production?.daily_advance?.toFixed(1) || 0} m</div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">月推进</div>
+          <div className="font-medium">{production?.monthly_advance?.toFixed(0) || 0} m</div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">日产量</div>
+          <div className="font-medium">{production?.daily_output?.toFixed(0) || 0} 吨</div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2">
+          <div className="text-xs text-gray-400">月产量</div>
+          <div className="font-medium">{((production?.monthly_output || 0) / 10000).toFixed(2)} 万吨</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * 增强版甘特图组件
+ */
+function EnhancedGanttChart({ data }) {
+  if (!data || data.length === 0) return null;
+
+  // 计算时间范围
+  const minStart = Math.min(...data.map((d) => d.start));
+  const maxEnd = Math.max(...data.map((d) => d.end));
+  const totalDays = maxEnd - minStart;
+
+  // 按工作面分组
+  const workfaces = [...new Set(data.map((d) => d.workface))];
+
+  // 阶段颜色映射
+  const phaseColors = {
+    tunneling: 'bg-orange-500',
+    installation: 'bg-purple-500',
+    first_mining: 'bg-lime-500',
+    normal_mining: 'bg-green-600',
+    end_mining: 'bg-emerald-700',
+    withdrawal: 'bg-gray-500',
+    preparation: 'bg-yellow-500',
+    mining: 'bg-green-500',
+  };
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[600px] space-y-1">
+        {/* 时间轴 */}
+        <div className="flex mb-2 text-[10px] text-gray-500">
+          <div className="w-20 flex-shrink-0" />
+          <div className="flex-1 flex justify-between px-1">
+            {[0, 0.25, 0.5, 0.75, 1].map((pct) => (
+              <span key={pct}>{Math.round(minStart + totalDays * pct)} 天</span>
+            ))}
+          </div>
+        </div>
+
+        {/* 甘特条 */}
+        {workfaces.map((wf) => {
+          const wfData = data.filter((d) => d.workface === wf);
+          return (
+            <div key={wf} className="flex items-center gap-1">
+              <div className="w-20 flex-shrink-0 text-[10px] truncate text-gray-300">{wf}</div>
+              <div className="flex-1 h-5 bg-gray-700/50 rounded relative">
+                {wfData.map((item, idx) => {
+                  const left = ((item.start - minStart) / totalDays) * 100;
+                  const width = ((item.end - item.start) / totalDays) * 100;
+                  const colorClass = phaseColors[item.phase] || phaseColors[item.type] || 'bg-gray-500';
+                  return (
+                    <div
+                      key={idx}
+                      className={`absolute h-full rounded ${colorClass} opacity-90 hover:opacity-100 transition-opacity cursor-pointer`}
+                      style={{
+                        left: `${left}%`,
+                        width: `${Math.max(width, 1)}%`,
+                      }}
+                      title={`${item.task}: ${item.start_date || item.start} ~ ${item.end_date || item.end}`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* 图例 */}
+        <div className="flex flex-wrap gap-3 mt-3 text-[10px] text-gray-400">
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-orange-500 rounded" />
+            <span>掘进</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-purple-500 rounded" />
+            <span>安装</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-lime-500 rounded" />
+            <span>初采</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-green-600 rounded" />
+            <span>正常回采</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-emerald-700 rounded" />
+            <span>末采</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-gray-500 rounded" />
+            <span>回撤</span>
           </div>
         </div>
       </div>
