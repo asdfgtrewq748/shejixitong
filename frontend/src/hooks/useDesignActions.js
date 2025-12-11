@@ -5,6 +5,7 @@
 
 import { useCallback } from 'react';
 import * as api from '../api';
+import { quickOptimizeSuccession } from '../api';
 
 // 模拟边界数据（演示用）
 const MINING_BOUNDARY = [
@@ -63,6 +64,7 @@ export const calculateScores = (boreholes) => {
  * @param {Function} options.setSystemLog - 设置系统日志
  * @param {Function} options.setSettingsOpen - 设置设置面板状态
  * @param {Function} options.setViewInitialized - 设置视图初始化状态
+ * @param {Function} options.setInitialSuccession - 设置初始接续方案
  * @param {Function} options.addLog - 添加日志
  */
 const useDesignActions = ({
@@ -83,6 +85,7 @@ const useDesignActions = ({
   setSystemLog,
   setSettingsOpen,
   setViewInitialized,
+  setInitialSuccession,
   addLog
 }) => {
 
@@ -276,6 +279,33 @@ const useDesignActions = ({
       addLog(`平均评分: ${stats.avgScore || 0}分`, 'info');
       addLog(`开采方式: ${stats.miningMethod || '走向长壁后退式'}`, 'info');
 
+      // 3. 自动生成初始接续方案
+      if (workfaces.length > 0 && setInitialSuccession) {
+        addLog('正在生成初始接续方案...', 'loading');
+        try {
+          // 格式化工作面数据
+          const formattedPanels = workfaces.map((panel, index) => ({
+            id: panel.id || `WF-${String(index + 1).padStart(2, '0')}`,
+            length: panel.length || 200,
+            width: panel.width || 1000,
+            center_x: panel.center_x || panel.center?.[0] || 0,
+            center_y: panel.center_y || panel.center?.[1] || 0,
+            avgThickness: panel.avgThickness || 2.0,
+            avgScore: panel.avgScore || 75,
+          }));
+
+          // 使用顺序策略生成初始接续方案
+          const successionResult = await quickOptimizeSuccession(formattedPanels, 'sequential');
+          setInitialSuccession(successionResult);
+          addLog(`初始接续方案已生成 (顺序策略)`, 'success');
+          addLog(`  - 总工期: ${successionResult.summary?.total_months || 0}月`, 'info');
+          addLog(`  - 累计产量: ${((successionResult.summary?.cumulative_production || 0) / 10000).toFixed(1)}万吨`, 'info');
+        } catch (successionErr) {
+          addLog('初始接续方案生成失败: ' + successionErr.message, 'warning');
+          // 不影响主流程，继续执行
+        }
+      }
+
       setActiveTab('synthesis');
     } catch (err) {
       addLog('设计生成失败: ' + err.message, 'warning');
@@ -285,7 +315,7 @@ const useDesignActions = ({
   }, [
     weights, designParams, displayDimension, userEdits,
     setBoundary, setBoreholes, setScoreData, setDesignData,
-    setActiveTab, setIsLoading, setViewInitialized, addLog
+    setActiveTab, setIsLoading, setViewInitialized, setInitialSuccession, addLog
   ]);
 
   // 重置所有数据

@@ -1,8 +1,46 @@
+# Dependencies
 node_modules/
+**/node_modules/
+
+# Python
 __pycache__/
+**/__pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+.Python
 venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build outputs
 dist/
-.DS_Store
+build/
+*.egg-info/
+.vite/
+
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads
+uploads/
+**/uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Claude
+.claude/

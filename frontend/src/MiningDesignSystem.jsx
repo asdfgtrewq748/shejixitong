@@ -44,6 +44,7 @@ const MiningDesignSystem = () => {
   // 热力图/等值线/设计数据状态
   const [scoreData, setScoreData] = useState(null); // { grids, contours, bounds }
   const [designData, setDesignData] = useState(null); // { roadways, workingFaces, zones }
+  const [initialSuccession, setInitialSuccession] = useState(null); // 初始接续方案
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showContours, setShowContours] = useState(true);
   const [showDesign, setShowDesign] = useState(true);
@@ -219,6 +220,7 @@ const MiningDesignSystem = () => {
     setSystemLog,
     setSettingsOpen,
     setViewInitialized,
+    setInitialSuccession,
     addLog
   });
 
@@ -463,6 +465,7 @@ const MiningDesignSystem = () => {
       selectedWorkface={selectedWorkface}
       boreholes={boreholes}
       systemLog={systemLog}
+      initialSuccession={initialSuccession}
     />
     </main>
   </div>

@@ -281,31 +281,207 @@ async def optimize_succession(request: OptimizeRequest):
 async def quick_optimize(request: QuickOptimizeRequest):
     """
     使用基线策略快速优化（不需要训练）
+    从零开始规划新采区的接替方案
     """
     panels_data = [p.dict() for p in request.panels]
 
-    # 创建环境
-    env_config = EnvironmentConfig(workface_data=panels_data)
-    env = MineSuccessionEnv(env_config)
-
-    # 根据策略生成方案
+    # 根据策略生成从零开始的接替方案
     if request.strategy == 'greedy':
-        plan = _greedy_strategy(env)
+        plan = _generate_new_area_plan(panels_data, 'greedy')
     elif request.strategy == 'sequential':
-        plan = _sequential_strategy(env)
+        plan = _generate_new_area_plan(panels_data, 'sequential')
     elif request.strategy == 'score_based':
-        plan = _score_based_strategy(env)
+        plan = _generate_new_area_plan(panels_data, 'score_based')
     else:
-        plan = _greedy_strategy(env)
-
-    gantt_data = export_gantt_data(plan)
+        plan = _generate_new_area_plan(panels_data, 'greedy')
 
     return {
         "success": True,
         "strategy": request.strategy,
-        "plan": plan,
-        "gantt_data": gantt_data,
+        "plan": plan['plan'],
+        "gantt_data": plan['gantt_data'],
         "summary": plan['summary'],
+        "succession_order": plan['succession_order'],
+        "first_workface": plan['first_workface'],
+        "selection_reasons": plan['selection_reasons'],
+    }
+
+
+def _generate_new_area_plan(panels_data: List[Dict], strategy: str) -> Dict:
+    """
+    从零开始生成新采区的接替方案
+    
+    核心思路：
+    1. 首先选择首采面（根据策略确定）
+    2. 确定接替顺序（考虑空间布局、地质条件、接续连贯性）
+    3. 生成时间计划（准备期+回采期，确保接续连贯）
+    4. 给出选择理由
+    """
+    if not panels_data:
+        return {
+            'plan': {'workface_schedule': {}},
+            'gantt_data': [],
+            'summary': {'total_months': 0, 'cumulative_production': 0, 'completed_workfaces': 0, 'total_workfaces': 0},
+            'succession_order': [],
+            'first_workface': None,
+            'selection_reasons': {},
+        }
+    
+    # 计算每个工作面的属性
+    workfaces = []
+    for wf_data in panels_data:
+        length = wf_data.get('length', 200)
+        width = wf_data.get('width', 1000)
+        thickness = wf_data.get('avgThickness', 2.0)
+        coal_density = 1.4  # t/m³
+        reserves = length * width * thickness * coal_density / 10000  # 万吨
+        
+        workfaces.append({
+            'id': wf_data.get('id', f"WF-{len(workfaces)+1:02d}"),
+            'length': length,
+            'width': width,
+            'thickness': thickness,
+            'reserves': reserves,
+            'score': wf_data.get('avgScore', 75),
+            'center_x': wf_data.get('center_x', 0),
+            'center_y': wf_data.get('center_y', 0),
+        })
+    
+    # 根据策略确定接替顺序
+    if strategy == 'greedy':
+        # 贪心策略：优先储量大的工作面
+        sorted_wf = sorted(workfaces, key=lambda x: -x['reserves'])
+        strategy_name = "储量优先策略"
+        strategy_desc = "优先开采储量大的工作面，快速获取产量"
+    elif strategy == 'score_based':
+        # 评分策略：优先地质条件好的工作面
+        sorted_wf = sorted(workfaces, key=lambda x: -x['score'])
+        strategy_name = "地质优先策略"
+        strategy_desc = "优先开采地质条件好的工作面，降低开采风险"
+    else:  # sequential
+        # 顺序策略：按空间位置从一端到另一端
+        sorted_wf = sorted(workfaces, key=lambda x: (x['center_y'], x['center_x']))
+        strategy_name = "空间顺序策略"
+        strategy_desc = "按空间位置依次开采，减少通风调整和运输距离"
+    
+    succession_order = [wf['id'] for wf in sorted_wf]
+    first_workface = succession_order[0] if succession_order else None
+    
+    # 生成选择理由
+    selection_reasons = {}
+    for i, wf in enumerate(sorted_wf):
+        if i == 0:
+            if strategy == 'greedy':
+                reason = f"首采面：储量最大（{wf['reserves']:.1f}万吨），地质评分{wf['score']:.0f}分，开采条件良好"
+            elif strategy == 'score_based':
+                reason = f"首采面：地质评分最高（{wf['score']:.0f}分），储量{wf['reserves']:.1f}万吨，开采风险低"
+            else:
+                reason = f"首采面：位于采区边缘，便于通风系统布置，储量{wf['reserves']:.1f}万吨"
+        else:
+            prev_wf = sorted_wf[i-1]
+            distance = ((wf['center_x'] - prev_wf['center_x'])**2 + (wf['center_y'] - prev_wf['center_y'])**2)**0.5
+            if strategy == 'greedy':
+                reason = f"第{i+1}接替面：储量{wf['reserves']:.1f}万吨（排名第{i+1}），与上一工作面距离{distance:.0f}m"
+            elif strategy == 'score_based':
+                reason = f"第{i+1}接替面：地质评分{wf['score']:.0f}分（排名第{i+1}），储量{wf['reserves']:.1f}万吨"
+            else:
+                reason = f"第{i+1}接替面：按空间顺序接替，与上一工作面相邻，储量{wf['reserves']:.1f}万吨"
+        selection_reasons[wf['id']] = reason
+    
+    # 生成时间计划（从0月开始）
+    # 参数设置
+    prep_months = 6  # 准备期（包括掘进、安装）
+    monthly_advance = 80  # 月推进速度 (m)
+    overlap_months = 3  # 接替准备提前量（在上一个面完成前开始准备下一个面）
+    max_concurrent_mining = 2  # 最大同时回采面数
+    
+    workface_schedule = {}
+    gantt_data = []
+    current_month = 0
+    cumulative_production = 0
+    
+    active_mining = []  # 当前正在回采的工作面
+    
+    for i, wf in enumerate(sorted_wf):
+        # 计算回采时间
+        mining_months = max(1, int(wf['width'] / monthly_advance))
+        
+        # 确定准备开始时间
+        if i == 0:
+            # 首采面从0月开始准备
+            prep_start = 0
+        else:
+            # 后续工作面：确保与前一个面的接替衔接
+            # 在前一个面回采结束前 overlap_months 开始准备
+            prev_wf_id = sorted_wf[i-1]['id']
+            prev_schedule = workface_schedule[prev_wf_id]
+            prev_mining_end = prev_schedule['mining_end']
+            
+            # 计算开始准备的时间点：确保本面准备完成时，前面还有工作面在采
+            # 准备开始时间 = 前面回采结束时间 - 准备期 - 接替提前量
+            ideal_prep_start = prev_mining_end - prep_months
+            
+            # 但不能早于前一个面的准备开始时间
+            prep_start = max(prev_schedule['prep_start'] + overlap_months, ideal_prep_start)
+        
+        mining_start = prep_start + prep_months
+        mining_end = mining_start + mining_months
+        
+        # 计算产量
+        production = wf['reserves'] * 10000  # 吨
+        cumulative_production += production
+        
+        workface_schedule[wf['id']] = {
+            'order': i + 1,
+            'prep_start': prep_start,
+            'prep_end': prep_start + prep_months,
+            'mining_start': mining_start,
+            'mining_end': mining_end,
+            'duration_months': mining_months,
+            'reserves': wf['reserves'],
+            'production': production,
+            'status': '待准备',  # 初始状态都是待准备
+            'reason': selection_reasons[wf['id']],
+        }
+        
+        # 甘特图数据
+        gantt_data.append({
+            'workface': wf['id'],
+            'task': f'{wf["id"]} 准备',
+            'type': 'preparation',
+            'start': prep_start,
+            'end': prep_start + prep_months,
+        })
+        gantt_data.append({
+            'workface': wf['id'],
+            'task': f'{wf["id"]} 回采',
+            'type': 'mining',
+            'start': mining_start,
+            'end': mining_end,
+        })
+        
+        current_month = max(current_month, mining_end)
+    
+    # 汇总信息
+    summary = {
+        'total_months': current_month,
+        'total_years': round(current_month / 12, 1),
+        'cumulative_production': cumulative_production,
+        'cumulative_production_wan': round(cumulative_production / 10000, 1),
+        'completed_workfaces': 0,  # 初始都是待开采
+        'total_workfaces': len(workfaces),
+        'strategy_name': strategy_name,
+        'strategy_desc': strategy_desc,
+        'avg_monthly_production': round(cumulative_production / current_month, 0) if current_month > 0 else 0,
+    }
+    
+    return {
+        'plan': {'workface_schedule': workface_schedule},
+        'gantt_data': gantt_data,
+        'summary': summary,
+        'succession_order': succession_order,
+        'first_workface': first_workface,
+        'selection_reasons': selection_reasons,
     }
 
 

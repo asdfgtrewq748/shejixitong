@@ -1,0 +1,77 @@
+# Claude Code Ignore File
+# 排除这些文件/目录避免 "error writing file" 问题
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+.vite/
+**/dist/
+**/.vite/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+
+# Uploads and temporary files
+uploads/
+**/uploads/
+*.tmp
+*.lock
+
+# Large binary files
+*.dwg
+*.doc
+*.docx
+*.pdf
+
+# 包含中文字符的目录（可能导致编码问题）
+input/3451周边钻孔资料/
+input/各个钻孔-补充/
+input/测试钻孔/
+启动指南.md
+论文排版.py
+1-1-1中国矿业大学（北京）博士学位论文模板.doc
+3451N风运道预想剖面.dwg
+
+# Input CSV files (只读数据)
+input/**/*.csv
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage directories
+coverage/
+.nyc_output/
+
+# Dependencies lock files (large and auto-generated)
+package-lock.json
+yarn.lock
+poetry.lock

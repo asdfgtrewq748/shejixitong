@@ -5,7 +5,7 @@ import os
 import time
 from datetime import datetime
 
-from routers import upload, boreholes, design, score, boundary, geology, succession
+from routers import upload, boreholes, design, score, boundary, geology, succession, gnn_geology
 from store import store
 from utils.logger import logger, log_api_request
 
@@ -44,6 +44,7 @@ app.include_router(score.router, prefix="/api/score", tags=["Score"])
 app.include_router(boundary.router, prefix="/api/boundary", tags=["Boundary"])
 app.include_router(geology.router, prefix="/api/geology", tags=["Geology"])
 app.include_router(succession.router, prefix="/api/succession", tags=["Succession"])
+app.include_router(gnn_geology.router, prefix="/api/gnn", tags=["GNN Geology"])
 
 
 @app.get("/")

@@ -14,6 +14,7 @@ const RightPanel = ({
   selectedWorkface,
   boreholes,
   systemLog,
+  initialSuccession,
 }) => {
   const [showSuccession, setShowSuccession] = useState(false);
 
@@ -165,10 +166,19 @@ const RightPanel = ({
                  >
                    <span className="flex items-center gap-2">
                      <Layers size={14} />
-                     工作面接续优化
+                     {initialSuccession ? '查看/优化接续方案' : '工作面接续优化'}
                    </span>
                    {showSuccession ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                  </button>
+                 {/* 初始接续方案简要信息 */}
+                 {initialSuccession && !showSuccession && (
+                   <div className="mt-2 p-2 bg-green-900/20 border border-green-500/30 rounded text-[10px] text-green-300">
+                     <div className="flex justify-between">
+                       <span>初始方案已生成</span>
+                       <span>工期: {initialSuccession.summary?.total_months || 0}月</span>
+                     </div>
+                   </div>
+                 )}
                </div>
             </div>
           </div>
@@ -178,6 +188,7 @@ const RightPanel = ({
             <div className="border-t border-gray-700/50 p-3">
               <SuccessionPanel
                 panels={designData.panels || []}
+                initialSuccession={initialSuccession}
                 onClose={() => setShowSuccession(false)}
               />
             </div>

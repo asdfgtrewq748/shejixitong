@@ -20,7 +20,9 @@
       "Bash(npm start)",
       "Bash(curl:*)",
       "Bash(mkdir:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(pip install:*)",
+      "Bash(pip uninstall:*)"
     ],
     "deny": [],
     "ask": []
