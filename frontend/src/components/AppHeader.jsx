@@ -31,8 +31,8 @@ const AppHeader = ({
           </div>
         </div>
         <div>
-          <h1 className="text-2xl font-black tracking-widest text-white uppercase" style={{ textShadow: '0 0 10px rgba(59, 130, 246, 0.5)' }}>
-            GeoMind <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">智能采矿设计系统</span>
+          <h1 className="text-2xl font-black tracking-widest text-white" style={{ textShadow: '0 0 10px rgba(59, 130, 246, 0.5)' }}>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">采掘规划系统</span>
           </h1>
           <div className="flex items-center gap-2 text-[10px] text-gray-400 tracking-wider">
             <span className="w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
