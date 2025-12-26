@@ -416,5 +416,93 @@ export async function getAlgorithmInfo() {
   return apiGet('/succession/algorithm-info');
 }
 
+// ==================== 覆岩扰动评价 API ====================
+
+/**
+ * 获取评价场景列表
+ */
+export async function getDisturbanceScenarios() {
+  return apiGet('/disturbance/scenarios');
+}
+
+/**
+ * 获取权重矩阵
+ */
+export async function getWeightMatrix() {
+  return apiGet('/disturbance/weight-matrix');
+}
+
+/**
+ * 获取ODI等级划分标准
+ */
+export async function getODILevels() {
+  return apiGet('/disturbance/odi-levels');
+}
+
+/**
+ * 上传钻孔坐标数据
+ */
+export async function uploadDisturbanceBoreholes(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiPostForm('/disturbance/upload/boreholes', formData);
+}
+
+/**
+ * 上传钻孔分层数据
+ */
+export async function uploadBoreholeLayers_Disturbance(boreholeId, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiPostForm(`/disturbance/upload/borehole-layers/${boreholeId}`, formData);
+}
+
+/**
+ * 上传工作面坐标
+ */
+export async function uploadDisturbanceWorkface(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiPostForm('/disturbance/upload/workface', formData);
+}
+
+/**
+ * 上传实测数据
+ */
+export async function uploadMeasuredData(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiPostForm('/disturbance/upload/measured', formData);
+}
+
+/**
+ * 计算ODI
+ */
+export async function calculateODI(params) {
+  return apiPost('/disturbance/calculate', params);
+}
+
+/**
+ * 使用实测数据校准
+ */
+export async function calibrateODI(measuredPoints) {
+  return apiPost('/disturbance/calibrate', { measured_points: measuredPoints });
+}
+
+/**
+ * 导出计算结果
+ */
+export async function exportDisturbanceResults() {
+  return apiGet('/disturbance/export/results');
+}
+
+/**
+ * 获取地质/采矿参数等值线（使用最近一次计算结果）
+ */
+export async function getGeologyContours(field = 'Ti', levels = 10) {
+  const params = new URLSearchParams({ field, levels });
+  return apiGet(`/disturbance/contours/geology?${params.toString()}`);
+}
+
 // 导出ApiError类供外部使用
 export { ApiError };

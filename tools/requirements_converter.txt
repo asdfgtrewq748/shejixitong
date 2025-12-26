@@ -1,0 +1,4 @@
+# Excel 转 CSV 工具依赖
+PyQt6>=6.6.0
+pandas>=2.0.0
+openpyxl>=3.1.0

@@ -1,5 +1,6 @@
 import React from 'react';
-import { Cpu, Upload, Activity, Map as MapIcon, Settings, Save, FolderOpen } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Cpu, Upload, Activity, Map as MapIcon, Settings, Save, FolderOpen, Layers } from 'lucide-react';
 
 /**
  * 应用顶部导航栏组件
@@ -14,6 +15,8 @@ const AppHeader = ({
   onExportDXF,
   designData,
 }) => {
+  const navigate = useNavigate();
+
   const tabs = [
     { key: 'import', label: '数据源', icon: Upload },
     { key: 'analysis', label: '地质算力', icon: Activity },
@@ -63,6 +66,12 @@ const AppHeader = ({
 
       {/* 操作按钮 */}
       <div className="flex gap-3">
+        <button
+          onClick={() => navigate('/disturbance')}
+          className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-cyan-900/20 border border-cyan-400/20 transition-all hover:scale-105"
+        >
+          <Layers size={14} /> 扰动评价
+        </button>
         <button
           onClick={() => setSettingsOpen(!settingsOpen)}
           className={`p-2.5 hover:bg-white/10 rounded-lg transition-colors border hover:border-gray-600 ${settingsOpen ? 'text-blue-400 border-blue-500/50' : 'text-gray-400 border-transparent'}`}

@@ -22,7 +22,10 @@
       "Bash(mkdir:*)",
       "Bash(rm:*)",
       "Bash(pip install:*)",
-      "Bash(pip uninstall:*)"
+      "Bash(pip uninstall:*)",
+      "Bash(chcp 6500)",
+      "Bash(npm install react-router-dom --save)",
+      "Bash(timeout 5 python -c \"\nimport uvicorn\nfrom main import app\nprint\\(''后端配置正确，可以启动''\\)\n# 不实际启动，只检查配置\n\")"
     ],
     "deny": [],
     "ask": []

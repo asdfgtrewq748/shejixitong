@@ -7,11 +7,20 @@ def parse_csv_file(file_content: bytes) -> List[Dict]:
     """
     解析 CSV 文件内容，处理 BOM 和列名
     """
-    # 尝试解码，处理 UTF-8 BOM
-    try:
-        content_str = file_content.decode('utf-8-sig')
-    except UnicodeDecodeError:
-        content_str = file_content.decode('gbk') # 尝试 GBK
+    # 尝试多种编码
+    encodings = ['utf-8-sig', 'utf-8', 'gbk', 'gb18030', 'gb2312', 'latin-1']
+    content_str = None
+
+    for encoding in encodings:
+        try:
+            content_str = file_content.decode(encoding)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    if content_str is None:
+        # 最后尝试用 errors='ignore' 强制解码
+        content_str = file_content.decode('utf-8', errors='ignore')
 
     df = pd.read_csv(StringIO(content_str))
     
