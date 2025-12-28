@@ -25,7 +25,19 @@
       "Bash(pip uninstall:*)",
       "Bash(chcp 6500)",
       "Bash(npm install react-router-dom --save)",
-      "Bash(timeout 5 python -c \"\nimport uvicorn\nfrom main import app\nprint\\(''后端配置正确，可以启动''\\)\n# 不实际启动，只检查配置\n\")"
+      "Bash(timeout 5 python -c \"\nimport uvicorn\nfrom main import app\nprint\\(''后端配置正确，可以启动''\\)\n# 不实际启动，只检查配置\n\")",
+      "Bash(timeout 5 python -c \"\nimport sys\nsys.path.insert\\(0, ''.''\\)\nfrom utils.odi_calculator_v2 import ODICalculatorV2, ScenarioType\nprint\\(''ODI Calculator V2 import success''\\)\ncalculator = ODICalculatorV2\\(ScenarioType.SURFACE_SUBSIDENCE, use_fitted_matrix=True\\)\nprint\\(''Calculator created successfully''\\)\nprint\\(''Scenario weights:'', calculator.scenario_weights\\)\n\")",
+      "Bash(timeout 5 python -c \"\nimport sys\nsys.path.insert\\(0, ''.''\\)\nfrom routers.disturbance import router\nprint\\(''Disturbance router import success''\\)\nprint\\(''Routes:'', [route.path for route in router.routes]\\)\n\")",
+      "Bash(echo \"  I级  \\(蓝色\\):   ODI <= 0.045\")",
+      "Bash(echo \"  II级 \\(黄色\\):   0.045 < ODI <= 0.345\")",
+      "Bash(echo \"  III级\\(橙色\\):   0.345 < ODI <= 0.825\")",
+      "Bash(echo \"  IV级 \\(浅红\\):   0.825 < ODI <= 0.847\")",
+      "Bash(echo \"  V级  \\(深红\\):   ODI > 0.847\")",
+      "Bash(echo \"   I级: <=0.045\")",
+      "Bash(echo \"   II级: <=0.345\")",
+      "Bash(echo \"   III级: <=0.825\")",
+      "Bash(echo \"   IV级: <=0.847\")",
+      "Bash(echo \"   V级: >0.847\")"
     ],
     "deny": [],
     "ask": []

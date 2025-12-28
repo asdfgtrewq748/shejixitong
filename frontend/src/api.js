@@ -504,5 +504,16 @@ export async function getGeologyContours(field = 'Ti', levels = 10) {
   return apiGet(`/disturbance/contours/geology?${params.toString()}`);
 }
 
+/**
+ * 获取后端生成的热力图图片
+ * @param {string} field - 字段名 (odi_normalized, odi, Ti, Hi, Di, Mi)
+ * @param {number} resolution - 分辨率 (默认500)
+ * @param {string} format - 格式 (png/svg)
+ */
+export async function getHeatmapImage(field = 'odi_normalized', resolution = 500, format = 'png') {
+  const params = new URLSearchParams({ field, resolution, format });
+  return apiGet(`/disturbance/heatmap/image?${params.toString()}`);
+}
+
 // 导出ApiError类供外部使用
 export { ApiError };

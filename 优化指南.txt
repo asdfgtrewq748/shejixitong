@@ -1,0 +1,838 @@
+================================================================================
+                    覆岩扰动评价系统 - 优化指南 v2.0
+================================================================================
+                          更新日期: 2025-12-28
+================================================================================
+
+本文档基于系统当前状态，提出进一步优化建议，按优先级和实现难度分类。
+
+================================================================================
+一、已完成的优化 (供参考)
+================================================================================
+
+1. [已完成] 评价点生成策略优化
+   - 添加了工作面中轴线检测算法
+   - 实现了沿中轴线的高密度采样
+   - 边界点步长减半，中心区域步长更密
+
+2. [已完成] 非开采区ODI归零
+   - 在calculate_all()中添加了Mi=0时ODI强制归零
+   - 添加了最终掩膜操作，工作面外部强制为I级
+
+3. [已完成] 后端高质量热力图渲染
+   - 使用matplotlib生成专业级等值线填充图
+   - 添加了统计面板和等级分布信息
+   - 默认启用高质量模式
+
+4. [已完成] 坐标变换修正
+   - 修正了Canvas模式下世界坐标与像素坐标的转换公式
+   - 修正了热力图绘制位置偏移问题
+
+
+================================================================================
+二、高优先级优化 (建议立即实施)
+================================================================================
+
+------------------------------------------------------------------------------
+2.1 性能优化：点在多边形内判断加速
+------------------------------------------------------------------------------
+
+问题描述:
+  当前在生成热力图时，对每个网格点(500x500=250000个)都进行射线法判断，
+  时间复杂度为 O(resolution² × polygon_vertices)，导致生成图片耗时较长。
+
+当前代码位置:
+  backend_python/routers/disturbance.py: get_heatmap_image() 函数
+  第869-874行的双重循环
+
+优化方案:
+  使用 matplotlib.path.Path 或 shapely 库进行向量化判断：
+
+  ```python
+  from matplotlib.path import Path
+  # 或使用 shapely
+  from shapely.geometry import Polygon, Point
+  from shapely.vectorized import contains
+
+  # 方案1: matplotlib.path (推荐，无额外依赖)
+  if workface_coords and len(workface_coords) >= 3:
+      poly = np.array([[p.get("x", 0), p.get("y", 0)] for p in workface_coords])
+      path = Path(poly)
+
+      # 将网格点展平为 (N, 2) 数组
+      points = np.column_stack([grid_xx.ravel(), grid_yy.ravel()])
+
+      # 向量化判断 (一次性判断所有点)
+      inside = path.contains_points(points).reshape(grid_z.shape)
+
+      # 应用掩膜
+      grid_z = np.where(~inside, np.nan, grid_z)
+
+  # 方案2: shapely (功能更强大)
+  from shapely.geometry import Polygon
+  from shapely.vectorized import contains
+
+  poly = Polygon([(p["x"], p["y"]) for p in workface_coords])
+  inside = contains(poly, grid_xx, grid_yy)
+  grid_z = np.where(~inside, np.nan, grid_z)
+  ```
+
+预期效果:
+  热力图生成时间从 5-10秒 降低到 0.5-1秒
+
+------------------------------------------------------------------------------
+2.2 插值算法优化：使用KD树加速IDW
+------------------------------------------------------------------------------
+
+问题描述:
+  当前IDW插值对每个插值点遍历所有数据点，时间复杂度 O(n×m)，
+  其中n为插值点数，m为数据点数。
+
+当前代码位置:
+  backend_python/utils/odi_calculator_v2.py: idw_interpolation() 函数
+
+优化方案:
+  使用 scipy.spatial.cKDTree 限制搜索范围：
+
+  ```python
+  from scipy.spatial import cKDTree
+
+  class ODICalculatorV2:
+      def __init__(self, ...):
+          ...
+          self._kd_tree = None
+          self._kd_data = None
+
+      def _build_kd_tree(self, bh_data: List[Dict]):
+          """构建KD树用于快速邻域搜索"""
+          if not bh_data:
+              return
+          coords = np.array([[p["x"], p["y"]] for p in bh_data])
+          self._kd_tree = cKDTree(coords)
+          self._kd_data = bh_data
+
+      def idw_interpolation_fast(self, x: float, y: float, field: str,
+                                   k: int = 8, power: float = 2.0) -> float:
+          """使用KD树加速的IDW插值"""
+          if self._kd_tree is None:
+              return 0.0
+
+          # 查询最近的k个点
+          distances, indices = self._kd_tree.query([x, y], k=min(k, len(self._kd_data)))
+
+          if np.isscalar(distances):
+              distances = [distances]
+              indices = [indices]
+
+          weights = []
+          values = []
+
+          for dist, idx in zip(distances, indices):
+              if dist < 0.1:
+                  return self._kd_data[idx].get(field, 0)
+
+              weight = 1.0 / (dist ** power)
+              weights.append(weight)
+              values.append(self._kd_data[idx].get(field, 0))
+
+          total_weight = sum(weights)
+          if total_weight == 0:
+              return 0.0
+
+          return sum(w * v for w, v in zip(weights, values)) / total_weight
+  ```
+
+预期效果:
+  评价点计算速度提升 3-5倍
+
+------------------------------------------------------------------------------
+2.3 前端优化：移除冗余Canvas代码
+------------------------------------------------------------------------------
+
+问题描述:
+  既然已默认使用后端高质量渲染，前端Canvas绑图代码（约700行）变得冗余。
+  这些代码增加了维护成本，且在某些设备上可能消耗不必要的资源。
+
+当前代码位置:
+  frontend/src/components/DisturbanceEvaluation.jsx: 第309-1017行
+
+优化方案A (保守): 延迟加载Canvas代码
+  ```javascript
+  // 使用动态导入，仅在用户关闭高质量模式时加载
+  const CanvasRenderer = React.lazy(() => import('./CanvasRenderer'));
+
+  // 在渲染时
+  {!useBackendImage && (
+    <Suspense fallback={<div>Loading...</div>}>
+      <CanvasRenderer results={results} ... />
+    </Suspense>
+  )}
+  ```
+
+优化方案B (激进): 完全移除Canvas渲染
+  如果确定不再需要前端渲染，可以：
+  1. 删除 canvasRef 及相关状态
+  2. 删除整个 Canvas useEffect (第309-1017行)
+  3. 删除 showContourFill, showContourLines, showPoints, contourLevels 状态
+  4. 简化图层控制面板，只保留字段选择
+
+预期效果:
+  - 减少约 700 行代码
+  - 降低初始加载时间
+  - 减少内存占用
+
+------------------------------------------------------------------------------
+2.4 数据验证增强
+------------------------------------------------------------------------------
+
+问题描述:
+  当前上传文件时缺乏严格的数据验证，可能导致计算错误或异常。
+
+需要添加的验证:
+
+  1. 钻孔坐标验证:
+     - X, Y 坐标应为有效数值
+     - 坐标范围应在合理地理范围内
+     - 检测重复钻孔ID
+
+  2. 工作面坐标验证:
+     - 至少需要4个点形成闭合多边形
+     - 点应按顺时针或逆时针顺序排列
+     - 多边形不应自相交
+
+  3. 地层数据验证:
+     - 厚度应为正数
+     - 弹性模量应在合理范围 (0.1-100 GPa)
+     - 深度应单调递增
+
+优化代码示例:
+  ```python
+  # backend_python/routers/disturbance.py
+
+  def validate_workface_coords(coords: List[Dict]) -> Tuple[bool, str]:
+      """验证工作面坐标"""
+      if len(coords) < 4:
+          return False, "工作面坐标至少需要4个点"
+
+      # 检查坐标值有效性
+      for i, p in enumerate(coords):
+          x, y = p.get("x"), p.get("y")
+          if x is None or y is None:
+              return False, f"第{i+1}个点坐标无效"
+          if not (-1e9 < x < 1e9 and -1e9 < y < 1e9):
+              return False, f"第{i+1}个点坐标超出合理范围"
+
+      # 检查多边形是否自相交
+      from shapely.geometry import Polygon
+      poly = Polygon([(p["x"], p["y"]) for p in coords])
+      if not poly.is_valid:
+          return False, "工作面多边形无效（可能自相交）"
+
+      return True, "验证通过"
+  ```
+
+
+================================================================================
+三、中优先级优化 (建议近期实施)
+================================================================================
+
+------------------------------------------------------------------------------
+3.1 多工作面支持完善
+------------------------------------------------------------------------------
+
+问题描述:
+  当前系统虽然在数据结构上支持多工作面，但UI和可视化只显示第一个工作面。
+
+需要实现的功能:
+
+  1. 前端多工作面上传:
+     ```javascript
+     const [workfaces, setWorkfaces] = useState([]);  // 多工作面数组
+
+     // 支持多次上传，累加工作面
+     const handleWorkfaceUpload = (file, action = 'add') => {
+       if (action === 'add') {
+         setWorkfaces([...workfaces, newWorkface]);
+       } else {
+         setWorkfaces([newWorkface]);  // 替换
+       }
+     };
+     ```
+
+  2. 后端多工作面ODI计算:
+     - 计算相邻工作面之间的煤柱宽度 lci
+     - 各工作面独立计算ODI，但考虑相互影响
+     - 生成综合热力图
+
+  3. 可视化增强:
+     - 不同工作面使用不同边界颜色
+     - 支持单独显示/隐藏各工作面
+     - 添加工作面列表管理界面
+
+------------------------------------------------------------------------------
+3.2 计算进度显示
+------------------------------------------------------------------------------
+
+问题描述:
+  大型工作面的ODI计算可能需要数秒，用户没有进度反馈。
+
+优化方案:
+
+  1. 后端添加进度端点:
+     ```python
+     # 使用SSE (Server-Sent Events) 推送进度
+     from fastapi.responses import StreamingResponse
+
+     _calculation_progress = {"current": 0, "total": 0, "status": "idle"}
+
+     @router.get("/calculate/progress")
+     async def get_calculation_progress():
+         return _calculation_progress
+
+     # 在 calculate_all() 中更新进度
+     def calculate_all(self):
+         total = len(self.evaluation_points)
+         for i, pt in enumerate(self.evaluation_points):
+             _calculation_progress["current"] = i + 1
+             _calculation_progress["total"] = total
+             # ... 计算逻辑
+     ```
+
+  2. 前端轮询显示:
+     ```javascript
+     const [progress, setProgress] = useState({ current: 0, total: 0 });
+
+     useEffect(() => {
+       if (isLoading) {
+         const interval = setInterval(async () => {
+           const p = await api.getCalculationProgress();
+           setProgress(p);
+         }, 500);
+         return () => clearInterval(interval);
+       }
+     }, [isLoading]);
+
+     // 显示进度条
+     {isLoading && (
+       <ProgressBar value={progress.current} max={progress.total} />
+     )}
+     ```
+
+------------------------------------------------------------------------------
+3.3 项目保存与加载
+------------------------------------------------------------------------------
+
+问题描述:
+  用户每次使用都需要重新上传数据，无法保存工作进度。
+
+优化方案:
+
+  1. 项目文件格式定义 (.odi):
+     ```json
+     {
+       "version": "1.0",
+       "created_at": "2025-12-28T10:00:00Z",
+       "scenario": "surface_subsidence",
+       "mining_params": {
+         "mining_height": 9.0,
+         "step_size": 25,
+         "collapse_angle": 75
+       },
+       "custom_weights": { "wd": 0.45, "wo": 0.30, "wf": 0.25 },
+       "borehole_coords": [...],
+       "borehole_layers": {...},
+       "workface_coords": [...],
+       "measured_data": [...],
+       "results": [...],  // 可选，保存计算结果
+       "notes": "用户备注"
+     }
+     ```
+
+  2. 后端导入/导出接口:
+     ```python
+     @router.post("/project/save")
+     async def save_project(project_data: dict):
+         # 返回JSON文件下载
+         ...
+
+     @router.post("/project/load")
+     async def load_project(file: UploadFile):
+         # 解析并恢复状态
+         ...
+     ```
+
+  3. 前端保存/加载按钮:
+     - 顶部工具栏添加"保存项目"和"打开项目"按钮
+     - 自动保存到 localStorage (可选)
+
+------------------------------------------------------------------------------
+3.4 热力图交互增强
+------------------------------------------------------------------------------
+
+问题描述:
+  当前后端渲染的热力图是静态图片，用户无法与之交互。
+
+优化方案:
+
+  1. 添加鼠标悬停信息:
+     - 后端图片 + 前端透明覆盖层
+     - 悬停时显示该点的ODI值、等级、坐标等
+
+     ```javascript
+     const [hoverInfo, setHoverInfo] = useState(null);
+
+     const handleMouseMove = (e) => {
+       const rect = imageRef.current.getBoundingClientRect();
+       const x = (e.clientX - rect.left) / rect.width;
+       const y = (e.clientY - rect.top) / rect.height;
+
+       // 根据比例计算实际坐标
+       const worldX = bounds.min_x + x * (bounds.max_x - bounds.min_x);
+       const worldY = bounds.max_y - y * (bounds.max_y - bounds.min_y);
+
+       // 查找最近的评价点
+       const nearest = findNearestPoint(worldX, worldY, results);
+       setHoverInfo(nearest);
+     };
+
+     // 显示悬浮信息框
+     {hoverInfo && (
+       <div className="tooltip" style={{ left: mouseX, top: mouseY }}>
+         <div>坐标: ({hoverInfo.x.toFixed(1)}, {hoverInfo.y.toFixed(1)})</div>
+         <div>ODI: {hoverInfo.odi_normalized.toFixed(4)}</div>
+         <div>等级: {hoverInfo.disturbance_name}</div>
+       </div>
+     )}
+     ```
+
+  2. 添加点击选中功能:
+     - 点击某点高亮显示详细信息
+     - 在右侧面板展示完整参数
+
+
+================================================================================
+四、低优先级优化 (可长期规划)
+================================================================================
+
+------------------------------------------------------------------------------
+4.1 3D可视化
+------------------------------------------------------------------------------
+
+功能描述:
+  提供三维地层剖面和ODI分布的可视化。
+
+技术选型:
+  - Three.js + React Three Fiber
+  - Deck.gl (适合大数据量)
+  - Plotly.js (快速实现)
+
+实现要点:
+  1. 地层剖面图：
+     - 根据钻孔数据生成3D地层模型
+     - 不同岩性用不同颜色/纹理
+     - 支持沿任意剖面线切割
+
+  2. ODI 3D分布：
+     - 工作面区域拉伸为3D体
+     - ODI值用颜色编码
+     - 支持等值面显示
+
+------------------------------------------------------------------------------
+4.2 时序分析
+------------------------------------------------------------------------------
+
+功能描述:
+  支持多期数据对比，分析扰动随开采进度的变化。
+
+数据结构扩展:
+  ```python
+  class TimeSeriesData:
+      timestamp: datetime
+      mining_progress: float  # 工作面推进距离
+      odi_results: List[Dict]
+      measured_data: List[Dict]
+  ```
+
+可视化:
+  - 时间轴滑块，拖动查看不同时期
+  - ODI变化趋势图
+  - 动画展示开采过程中扰动演化
+
+------------------------------------------------------------------------------
+4.3 GIS格式导出
+------------------------------------------------------------------------------
+
+功能描述:
+  支持将结果导出为标准GIS格式，便于与其他系统集成。
+
+支持格式:
+  - Shapefile (.shp)
+  - GeoJSON (.geojson)
+  - KML/KMZ (Google Earth)
+
+实现方式:
+  ```python
+  import geopandas as gpd
+  from shapely.geometry import Point, Polygon
+
+  @router.get("/export/geojson")
+  async def export_geojson():
+      results = _calculation_cache.get("last_result", [])
+
+      features = []
+      for r in results:
+          features.append({
+              "type": "Feature",
+              "geometry": {"type": "Point", "coordinates": [r["x"], r["y"]]},
+              "properties": {
+                  "odi": r["odi_normalized"],
+                  "level": r["disturbance_level"],
+                  "level_name": r["disturbance_name"]
+              }
+          })
+
+      return {
+          "type": "FeatureCollection",
+          "features": features
+      }
+  ```
+
+------------------------------------------------------------------------------
+4.4 报告自动生成
+------------------------------------------------------------------------------
+
+功能描述:
+  一键生成专业的扰动评价报告（Word/PDF格式）。
+
+报告内容:
+  1. 项目基本信息
+  2. 数据概况（钻孔数量、工作面参数等）
+  3. 计算参数设置
+  4. ODI分布图（热力图）
+  5. 统计分析（等级分布、关键区域识别）
+  6. 结论与建议
+
+技术实现:
+  ```python
+  from docx import Document
+  from docx.shared import Inches
+
+  @router.get("/export/report")
+  async def export_report():
+      doc = Document()
+      doc.add_heading('覆岩扰动评价报告', 0)
+
+      # 添加基本信息表格
+      doc.add_heading('一、项目概况', 1)
+      table = doc.add_table(rows=4, cols=2)
+      # ... 填充数据
+
+      # 添加热力图
+      doc.add_heading('二、ODI分布图', 1)
+      doc.add_picture(heatmap_image, width=Inches(6))
+
+      # 添加统计表格
+      doc.add_heading('三、统计分析', 1)
+      # ...
+
+      # 保存并返回
+      buffer = io.BytesIO()
+      doc.save(buffer)
+      return StreamingResponse(buffer, media_type="application/docx")
+  ```
+
+------------------------------------------------------------------------------
+4.5 机器学习增强
+------------------------------------------------------------------------------
+
+功能描述:
+  使用历史数据训练模型，提高预测精度。
+
+应用场景:
+  1. 权重矩阵自动优化:
+     - 收集实测数据与计算结果
+     - 使用梯度下降优化权重矩阵
+     - 使模型预测更接近实测值
+
+  2. 异常检测:
+     - 识别数据中的异常值
+     - 自动标记可疑钻孔数据
+
+  3. 等级阈值自适应:
+     - 根据不同矿区特征自动调整阈值
+     - 考虑地质条件差异
+
+
+================================================================================
+五、代码质量改进
+================================================================================
+
+------------------------------------------------------------------------------
+5.1 添加单元测试
+------------------------------------------------------------------------------
+
+当前问题:
+  缺乏自动化测试，代码修改后难以验证正确性。
+
+建议添加的测试:
+
+  ```python
+  # tests/test_odi_calculator.py
+  import pytest
+  from utils.odi_calculator_v2 import (
+      ODICalculatorV2, ScenarioType,
+      is_point_in_polygon, calculate_9_indicators
+  )
+
+  class TestPointInPolygon:
+      def test_point_inside_square(self):
+          poly = np.array([[0,0], [10,0], [10,10], [0,10]])
+          assert is_point_in_polygon(5, 5, poly) == True
+
+      def test_point_outside_square(self):
+          poly = np.array([[0,0], [10,0], [10,10], [0,10]])
+          assert is_point_in_polygon(15, 5, poly) == False
+
+      def test_point_on_edge(self):
+          poly = np.array([[0,0], [10,0], [10,10], [0,10]])
+          # 边界情况需要明确处理策略
+          ...
+
+  class TestODICalculation:
+      def test_odi_range(self):
+          """ODI应在0-1范围内"""
+          calc = ODICalculatorV2(ScenarioType.SURFACE_SUBSIDENCE)
+          # ... 加载测试数据
+          results = calc.calculate_all()
+          for r in results:
+              assert 0 <= r["odi_normalized"] <= 1
+
+      def test_level_assignment(self):
+          """等级应正确分配"""
+          ...
+
+  class TestWeightMatrix:
+      def test_column_sum_normalized(self):
+          """权重矩阵每列和应为1"""
+          from utils.odi_calculator_v2 import WEIGHT_MATRIX_SURFACE
+          col_sums = WEIGHT_MATRIX_SURFACE.sum(axis=0)
+          np.testing.assert_array_almost_equal(col_sums, np.ones(9), decimal=5)
+  ```
+
+------------------------------------------------------------------------------
+5.2 日志系统完善
+------------------------------------------------------------------------------
+
+当前问题:
+  后端缺乏结构化日志，难以排查问题。
+
+优化方案:
+  ```python
+  # backend_python/utils/logger.py
+  import logging
+  from logging.handlers import RotatingFileHandler
+
+  def setup_logger():
+      logger = logging.getLogger("odi_system")
+      logger.setLevel(logging.DEBUG)
+
+      # 文件处理器
+      file_handler = RotatingFileHandler(
+          "logs/odi_system.log",
+          maxBytes=10*1024*1024,  # 10MB
+          backupCount=5
+      )
+      file_handler.setFormatter(logging.Formatter(
+          '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      ))
+
+      logger.addHandler(file_handler)
+      return logger
+
+  logger = setup_logger()
+
+  # 使用示例
+  logger.info(f"开始计算ODI，评价点数量: {len(points)}")
+  logger.warning(f"钻孔 {bh_id} 数据不完整")
+  logger.error(f"计算失败: {str(e)}", exc_info=True)
+  ```
+
+------------------------------------------------------------------------------
+5.3 类型注解完善
+------------------------------------------------------------------------------
+
+当前问题:
+  部分函数缺乏类型注解，影响代码可读性和IDE支持。
+
+示例改进:
+  ```python
+  from typing import List, Dict, Tuple, Optional, Union
+  from dataclasses import dataclass
+  import numpy as np
+  from numpy.typing import NDArray
+
+  @dataclass
+  class EvaluationPoint:
+      id: str
+      x: float
+      y: float
+      point_type: str  # "borehole", "workface_interior", etc.
+
+  @dataclass
+  class ODIResult:
+      point: EvaluationPoint
+      geo_params: Dict[str, float]
+      mining_params: Dict[str, float]
+      indicators: Dict[str, float]
+      odi: float
+      odi_normalized: float
+      disturbance_level: int
+      disturbance_name: str
+      in_workface: bool
+
+  def calculate_9_indicators(
+      params: NDArray[np.float64],
+      weight_matrix: NDArray[np.float64]
+  ) -> NDArray[np.float64]:
+      """计算9个响应指标"""
+      ...
+  ```
+
+------------------------------------------------------------------------------
+5.4 配置文件外部化
+------------------------------------------------------------------------------
+
+当前问题:
+  权重矩阵、等级阈值等硬编码在代码中，修改需要改代码。
+
+优化方案:
+  ```yaml
+  # config/odi_config.yaml
+  scenarios:
+    surface_subsidence:
+      weights:
+        wd: 0.45
+        wo: 0.30
+        wf: 0.25
+      calibration:
+        scale: 0.00501721
+        bias: -0.68355928
+
+    aquifer_disturbance:
+      weights:
+        wd: 0.60
+        wo: 0.25
+        wf: 0.15
+      calibration:
+        scale: 0.00451917
+        bias: -0.30262604
+
+  levels:
+    - level: 1
+      name: "I级"
+      meaning: "轻微扰动"
+      odi_max: 0.045
+      subsidence_max: 0.30
+    # ...
+
+  rock_modulus:
+    腐殖土: 0.54
+    泥岩: 5.4
+    粉砂岩: 10.2
+    # ...
+  ```
+
+  ```python
+  # backend_python/utils/config.py
+  import yaml
+
+  def load_config(path: str = "config/odi_config.yaml") -> dict:
+      with open(path, 'r', encoding='utf-8') as f:
+          return yaml.safe_load(f)
+
+  CONFIG = load_config()
+  ```
+
+
+================================================================================
+六、安全性改进
+================================================================================
+
+1. 文件上传限制:
+   - 限制文件大小 (如 10MB)
+   - 限制文件类型 (仅允许 .csv, .xlsx, .xls)
+   - 添加病毒扫描 (可选)
+
+2. 输入验证:
+   - 对所有API参数进行严格验证
+   - 使用Pydantic模型约束
+
+3. 速率限制:
+   - 防止恶意请求
+   - 使用 slowapi 或类似中间件
+
+4. 错误信息脱敏:
+   - 生产环境不暴露内部错误详情
+
+
+================================================================================
+七、部署与运维
+================================================================================
+
+1. Docker化:
+   ```dockerfile
+   FROM python:3.10-slim
+
+   WORKDIR /app
+   COPY requirements.txt .
+   RUN pip install --no-cache-dir -r requirements.txt
+
+   COPY . .
+
+   CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+   ```
+
+2. 健康检查端点:
+   ```python
+   @router.get("/health")
+   async def health_check():
+       return {
+           "status": "healthy",
+           "version": "2.0.0",
+           "timestamp": datetime.now().isoformat()
+       }
+   ```
+
+3. 性能监控:
+   - 添加 Prometheus 指标收集
+   - 记录关键操作耗时
+
+
+================================================================================
+八、实施优先级总结
+================================================================================
+
+立即实施 (1-2天):
+  □ 2.1 点在多边形内判断加速 (性能提升显著)
+  □ 2.4 数据验证增强 (防止异常)
+
+短期实施 (1周内):
+  □ 2.2 KD树加速IDW插值
+  □ 2.3 前端Canvas代码清理
+  □ 3.2 计算进度显示
+
+中期实施 (1个月内):
+  □ 3.1 多工作面支持完善
+  □ 3.3 项目保存与加载
+  □ 3.4 热力图交互增强
+  □ 5.1 添加单元测试
+
+长期规划:
+  □ 4.1 3D可视化
+  □ 4.2 时序分析
+  □ 4.4 报告自动生成
+
+
+================================================================================
+                              文档结束
+================================================================================
