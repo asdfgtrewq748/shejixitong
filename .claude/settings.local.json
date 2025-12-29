@@ -37,7 +37,8 @@
       "Bash(echo \"   II级: <=0.345\")",
       "Bash(echo \"   III级: <=0.825\")",
       "Bash(echo \"   IV级: <=0.847\")",
-      "Bash(echo \"   V级: >0.847\")"
+      "Bash(echo \"   V级: >0.847\")",
+      "Bash(timeout 5 python -c \"\nimport sys\nsys.path.insert\\(0, ''.''\\)\nfrom routers.disturbance import router, validate_workface_coords, validate_borehole_data\nprint\\(''Disturbance router import success''\\)\n\n# 测试验证函数\nis_valid, msg, warnings = validate_workface_coords\\([\n    {''x'': 0, ''y'': 0},\n    {''x'': 100, ''y'': 0},\n    {''x'': 100, ''y'': 100},\n    {''x'': 0, ''y'': 100}\n]\\)\nprint\\(f''Workface validation: {is_valid}, {msg}''\\)\n\nis_valid, msg, warnings = validate_borehole_data\\([\n    {''id'': ''BH1'', ''x'': 50, ''y'': 50, ''Ti'': 10, ''Hi'': 100, ''Di'': 200}\n]\\)\nprint\\(f''Borehole validation: {is_valid}, {msg}''\\)\nprint\\(''All tests passed!''\\)\n\")"
     ],
     "deny": [],
     "ask": []

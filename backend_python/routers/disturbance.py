@@ -281,6 +281,30 @@ class MeasuredDataRequest(BaseModel):
 # 存储计算结果
 _calculation_cache = {}
 
+# 计算进度状态 (优化3.2)
+_calculation_progress = {
+    "status": "idle",      # idle, running, completed, error
+    "current": 0,
+    "total": 0,
+    "message": "",
+    "start_time": None
+}
+
+
+def update_progress(current: int, total: int, message: str = ""):
+    """更新计算进度"""
+    _calculation_progress["current"] = current
+    _calculation_progress["total"] = total
+    _calculation_progress["message"] = message
+    if current > 0 and total > 0:
+        _calculation_progress["percent"] = round(current / total * 100, 1)
+
+
+@router.get("/calculate/progress")
+async def get_calculation_progress():
+    """获取计算进度 (优化3.2)"""
+    return _calculation_progress
+
 
 @router.get("/scenarios")
 async def get_scenarios():
@@ -602,21 +626,35 @@ async def upload_measured(file: UploadFile = File(...)):
 @router.post("/calculate")
 async def calculate_odi(request: DisturbanceRequest):
     """计算ODI"""
+    import time
     try:
+        # 初始化进度 (优化3.2)
+        _calculation_progress["status"] = "running"
+        _calculation_progress["current"] = 0
+        _calculation_progress["total"] = 100
+        _calculation_progress["message"] = "正在验证数据..."
+        _calculation_progress["start_time"] = time.time()
+
         # ========== 数据验证 (优化2.4) ==========
         all_warnings = []
 
         # 验证钻孔数据
         is_valid, error_msg, warnings = validate_borehole_data(request.borehole_data)
         if not is_valid:
+            _calculation_progress["status"] = "error"
+            _calculation_progress["message"] = error_msg
             raise HTTPException(status_code=400, detail=f"钻孔数据验证失败: {error_msg}")
         all_warnings.extend(warnings)
 
         # 验证工作面坐标
         is_valid, error_msg, warnings = validate_workface_coords(request.workface_coords)
         if not is_valid:
+            _calculation_progress["status"] = "error"
+            _calculation_progress["message"] = error_msg
             raise HTTPException(status_code=400, detail=f"工作面坐标验证失败: {error_msg}")
         all_warnings.extend(warnings)
+
+        update_progress(10, 100, "数据验证完成，正在初始化计算器...")
 
         # ========== 原有计算逻辑 ==========
         # 解析场景
@@ -642,6 +680,8 @@ async def calculate_odi(request: DisturbanceRequest):
                 request.custom_weights.wf
             )
 
+        update_progress(20, 100, "正在加载钻孔数据...")
+
         # 加载钻孔坐标
         calculator.load_borehole_coords(request.borehole_data)
 
@@ -656,6 +696,8 @@ async def calculate_odi(request: DisturbanceRequest):
                 "coal_thickness": bh.get("coal_thickness", 0),
             })
 
+        update_progress(30, 100, "正在加载工作面坐标...")
+
         # 加载工作面坐标
         if request.workface_coords:
             calculator.load_workface(request.workface_coords)
@@ -664,11 +706,17 @@ async def calculate_odi(request: DisturbanceRequest):
         if request.measured_data:
             calculator.load_measured_data(request.measured_data)
 
+        update_progress(40, 100, "正在计算ODI...")
+
         # 计算
         results = calculator.calculate_all()
 
+        update_progress(80, 100, "正在生成等值线...")
+
         # 生成等值线数据
         contours = generate_contours(results, request.workface_coords)
+
+        update_progress(90, 100, "正在整理结果...")
 
         # 缓存结果
         _calculation_cache["last_result"] = results
@@ -677,6 +725,10 @@ async def calculate_odi(request: DisturbanceRequest):
 
         # 计算统计信息并清理 nan/inf 值
         odi_values = [r["odi"] for r in results] if results else [0]
+
+        # 计算耗时
+        elapsed_time = time.time() - _calculation_progress.get("start_time", time.time())
+
         response_data = {
             "success": True,
             "point_count": len(results),
@@ -690,8 +742,15 @@ async def calculate_odi(request: DisturbanceRequest):
                 "mean_odi": float(np.mean(odi_values)),
                 "level_distribution": count_levels(results)
             },
-            "warnings": all_warnings if all_warnings else None  # 返回验证警告
+            "warnings": all_warnings if all_warnings else None,  # 返回验证警告
+            "elapsed_time": round(elapsed_time, 2)  # 返回计算耗时
         }
+
+        # 更新进度为完成
+        _calculation_progress["status"] = "completed"
+        _calculation_progress["current"] = 100
+        _calculation_progress["total"] = 100
+        _calculation_progress["message"] = f"计算完成，共{len(results)}个评价点，耗时{elapsed_time:.2f}秒"
 
         # 清理所有 nan/inf 值确保 JSON 可序列化
         return sanitize_for_json(response_data)
@@ -699,7 +758,114 @@ async def calculate_odi(request: DisturbanceRequest):
     except HTTPException:
         raise  # 重新抛出HTTP异常（来自数据验证）
     except Exception as e:
+        _calculation_progress["status"] = "error"
+        _calculation_progress["message"] = str(e)
         raise HTTPException(status_code=500, detail=f"计算失败: {str(e)}")
+
+
+# =============================================================================
+# 项目保存与加载 (优化3.3)
+# =============================================================================
+
+class ProjectData(BaseModel):
+    """项目数据模型"""
+    version: str = "1.0"
+    scenario: str = "surface_subsidence"
+    mining_params: Dict = {}
+    custom_weights: Optional[Dict] = None
+    borehole_coords: List[Dict] = []
+    borehole_layers: Dict = {}
+    workface_coords: List[Dict] = []
+    measured_data: List[Dict] = []
+    results: Optional[List[Dict]] = None
+    notes: str = ""
+
+
+@router.post("/project/save")
+async def save_project(project_data: ProjectData):
+    """保存项目数据 (优化3.3)"""
+    import json
+    from datetime import datetime
+    from fastapi.responses import Response
+
+    try:
+        # 构建项目数据
+        project = {
+            "version": project_data.version,
+            "created_at": datetime.now().isoformat(),
+            "scenario": project_data.scenario,
+            "mining_params": project_data.mining_params,
+            "custom_weights": project_data.custom_weights,
+            "borehole_coords": project_data.borehole_coords,
+            "borehole_layers": project_data.borehole_layers,
+            "workface_coords": project_data.workface_coords,
+            "measured_data": project_data.measured_data,
+            "results": project_data.results,
+            "notes": project_data.notes
+        }
+
+        # 清理数据中的NaN/Inf
+        project = sanitize_for_json(project)
+
+        # 转换为JSON字符串
+        json_str = json.dumps(project, ensure_ascii=False, indent=2)
+
+        # 返回JSON文件下载
+        filename = f"odi_project_{datetime.now().strftime('%Y%m%d_%H%M%S')}.odi"
+        return Response(
+            content=json_str,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存项目失败: {str(e)}")
+
+
+@router.post("/project/load")
+async def load_project(file: UploadFile = File(...)):
+    """加载项目文件 (优化3.3)"""
+    import json
+
+    try:
+        content = await file.read()
+
+        # 尝试解析JSON
+        try:
+            project = json.loads(content.decode('utf-8'))
+        except:
+            try:
+                project = json.loads(content.decode('gbk'))
+            except:
+                raise ValueError("无法解析项目文件，请确保是有效的ODI项目文件")
+
+        # 验证版本
+        version = project.get("version", "1.0")
+        if not version.startswith("1."):
+            raise ValueError(f"不支持的项目版本: {version}")
+
+        # 返回项目数据
+        return {
+            "success": True,
+            "version": version,
+            "created_at": project.get("created_at"),
+            "scenario": project.get("scenario", "surface_subsidence"),
+            "mining_params": project.get("mining_params", {}),
+            "custom_weights": project.get("custom_weights"),
+            "borehole_coords": project.get("borehole_coords", []),
+            "borehole_layers": project.get("borehole_layers", {}),
+            "workface_coords": project.get("workface_coords", []),
+            "measured_data": project.get("measured_data", []),
+            "results": project.get("results"),
+            "notes": project.get("notes", "")
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"加载项目失败: {str(e)}")
 
 
 @router.get("/contours/geology")

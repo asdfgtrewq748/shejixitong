@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   Activity, Upload, Database, Settings, Play, FileUp, Map,
   Layers, Target, AlertTriangle, CheckCircle, Download, RefreshCw,
-  ChevronDown, ChevronRight, Info, BarChart3, Sliders, Eye, ArrowLeft
+  ChevronDown, ChevronRight, Info, BarChart3, Sliders, Eye, ArrowLeft,
+  Save, FolderOpen
 } from 'lucide-react';
 import * as api from '../api';
 
@@ -93,6 +94,20 @@ const DisturbanceEvaluation = () => {
   const [useBackendImage, setUseBackendImage] = useState(true);
   const [backendImage, setBackendImage] = useState(null);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
+
+  // 计算进度状态 (优化3.2)
+  const [calculationProgress, setCalculationProgress] = useState({
+    status: 'idle',
+    current: 0,
+    total: 100,
+    message: '',
+    percent: 0
+  });
+  const progressIntervalRef = useRef(null);
+
+  // 热力图交互状态 (优化3.4)
+  const [hoverInfo, setHoverInfo] = useState(null);
+  const heatmapContainerRef = useRef(null);
 
   // 添加日志
   const addLog = useCallback((msg, type = 'info') => {
@@ -212,6 +227,39 @@ const DisturbanceEvaluation = () => {
     setIsLoading(false);
   };
 
+  // 进度轮询函数
+  const startProgressPolling = useCallback(() => {
+    // 清除之前的轮询
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+    }
+    // 每500ms轮询一次进度
+    progressIntervalRef.current = setInterval(async () => {
+      try {
+        const progress = await api.getCalculationProgress();
+        setCalculationProgress(progress);
+        if (progress.status === 'completed' || progress.status === 'error') {
+          clearInterval(progressIntervalRef.current);
+          progressIntervalRef.current = null;
+        }
+      } catch (err) {
+        // 忽略进度查询错误
+      }
+    }, 500);
+  }, []);
+
+  const stopProgressPolling = useCallback(() => {
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+  }, []);
+
+  // 组件卸载时清理
+  useEffect(() => {
+    return () => stopProgressPolling();
+  }, [stopProgressPolling]);
+
   // 执行ODI计算
   const handleCalculate = async () => {
     if (boreholeCoords.length === 0 || workfaceCoords.length === 0) {
@@ -220,7 +268,11 @@ const DisturbanceEvaluation = () => {
     }
 
     setIsLoading(true);
+    setCalculationProgress({ status: 'running', current: 0, total: 100, message: '准备计算...', percent: 0 });
     addLog('正在计算ODI...', 'loading');
+
+    // 启动进度轮询
+    startProgressPolling();
 
     try {
       // 构建钻孔完整数据
@@ -247,12 +299,20 @@ const DisturbanceEvaluation = () => {
         setContours(result.contours);
         setStatistics(result.statistics);
         setStep(4);
-        addLog(`计算完成，共 ${result.point_count} 个评价点`, 'success');
+        const elapsed = result.elapsed_time ? `, 耗时 ${result.elapsed_time}s` : '';
+        addLog(`计算完成，共 ${result.point_count} 个评价点${elapsed}`, 'success');
+
+        // 显示验证警告
+        if (result.warnings && result.warnings.length > 0) {
+          result.warnings.forEach(w => addLog(`⚠️ ${w}`, 'warning'));
+        }
       }
     } catch (err) {
       addLog(`计算失败: ${err.message}`, 'error');
     } finally {
+      stopProgressPolling();
       setIsLoading(false);
+      setCalculationProgress({ status: 'idle', current: 0, total: 100, message: '', percent: 0 });
     }
   };
 
@@ -314,6 +374,142 @@ const DisturbanceEvaluation = () => {
 
   // Canvas绑图代码已抽离到 CanvasRenderer.jsx 组件 (懒加载)
   // 这大幅减少了主组件的复杂度和初始加载时间
+
+  // ========== 热力图交互处理 (优化3.4) ==========
+  const handleHeatmapMouseMove = useCallback((e) => {
+    if (!results || results.length === 0 || !heatmapContainerRef.current) return;
+
+    const rect = heatmapContainerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // 计算世界坐标范围
+    const xs = results.map(r => r.x);
+    const ys = results.map(r => r.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+    // 图片区域 (估算，考虑padding)
+    const padding = 80;  // matplotlib默认padding
+    const imgWidth = rect.width * 0.85;  // 估算实际图像区域
+    const imgHeight = rect.height * 0.85;
+    const imgLeft = (rect.width - imgWidth) / 2;
+    const imgTop = (rect.height - imgHeight) / 2;
+
+    // 转换到世界坐标
+    const worldX = minX + ((x - imgLeft) / imgWidth) * (maxX - minX);
+    const worldY = maxY - ((y - imgTop) / imgHeight) * (maxY - minY);
+
+    // 查找最近的评价点
+    let nearestPoint = null;
+    let minDist = Infinity;
+    const threshold = Math.max(maxX - minX, maxY - minY) * 0.05; // 5%范围内
+
+    for (const pt of results) {
+      const dist = Math.sqrt((pt.x - worldX) ** 2 + (pt.y - worldY) ** 2);
+      if (dist < minDist && dist < threshold) {
+        minDist = dist;
+        nearestPoint = pt;
+      }
+    }
+
+    if (nearestPoint) {
+      setHoverInfo({
+        x: e.clientX,
+        y: e.clientY,
+        data: nearestPoint
+      });
+    } else {
+      setHoverInfo(null);
+    }
+  }, [results]);
+
+  const handleHeatmapMouseLeave = useCallback(() => {
+    setHoverInfo(null);
+  }, []);
+
+  // 获取ODI等级信息
+  const getODILevelInfo = (odi) => {
+    if (odi <= 0.045) return { level: 'I', color: 'bg-blue-500', text: '轻微扰动' };
+    if (odi <= 0.345) return { level: 'II', color: 'bg-yellow-500', text: '较弱扰动' };
+    if (odi <= 0.825) return { level: 'III', color: 'bg-orange-500', text: '中等扰动' };
+    if (odi <= 0.847) return { level: 'IV', color: 'bg-red-400', text: '较强扰动' };
+    return { level: 'V', color: 'bg-red-600', text: '强烈扰动' };
+  };
+
+  // ========== 项目保存与加载 (优化3.3) ==========
+  const projectFileInputRef = useRef(null);
+
+  const handleSaveProject = async () => {
+    addLog('正在保存项目...', 'loading');
+    try {
+      const projectData = {
+        version: "1.0",
+        scenario: activeScenario,
+        mining_params: {
+          mining_height: miningHeight,
+          step_size: stepSize,
+          collapse_angle: collapseAngle
+        },
+        custom_weights: customWeights,
+        borehole_coords: boreholeCoords,
+        borehole_layers: boreholeLayers,
+        workface_coords: workfaceCoords,
+        measured_data: measuredData,
+        results: results,
+        notes: ""
+      };
+
+      const response = await api.saveProject(projectData);
+
+      // 创建下载链接
+      const blob = new Blob([JSON.stringify(response, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `odi_project_${new Date().toISOString().slice(0,10)}.odi`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      addLog('项目保存成功', 'success');
+    } catch (err) {
+      addLog(`保存项目失败: ${err.message}`, 'error');
+    }
+  };
+
+  const handleLoadProject = async (file) => {
+    addLog('正在加载项目...', 'loading');
+    try {
+      const result = await api.loadProject(file);
+      if (result.success) {
+        // 恢复项目状态
+        setActiveScenario(result.scenario || 'surface_subsidence');
+        if (result.mining_params) {
+          setMiningHeight(result.mining_params.mining_height || 9.0);
+          setStepSize(result.mining_params.step_size || 25);
+          setCollapseAngle(result.mining_params.collapse_angle || 75);
+        }
+        if (result.custom_weights) {
+          setCustomWeights(result.custom_weights);
+        }
+        setBoreholeCoords(result.borehole_coords || []);
+        setBoreholeLayers(result.borehole_layers || {});
+        setWorkfaceCoords(result.workface_coords || []);
+        setMeasuredData(result.measured_data || []);
+        if (result.results) {
+          setResults(result.results);
+          setStep(4);
+        }
+
+        const createdAt = result.created_at ? ` (创建于 ${new Date(result.created_at).toLocaleString()})` : '';
+        addLog(`项目加载成功${createdAt}`, 'success');
+      }
+    } catch (err) {
+      addLog(`加载项目失败: ${err.message}`, 'error');
+    }
+  };
 
   // 渲染场景选择器
   const renderScenarioSelector = () => (
@@ -669,6 +865,15 @@ const DisturbanceEvaluation = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
+      {/* 隐藏的项目文件输入 */}
+      <input
+        ref={projectFileInputRef}
+        type="file"
+        accept=".odi,.json"
+        className="hidden"
+        onChange={(e) => e.target.files[0] && handleLoadProject(e.target.files[0])}
+      />
+
       {/* 顶部导航 */}
       <header className="h-14 bg-gray-900/80 backdrop-blur border-b border-gray-800 flex items-center px-6">
         <button
@@ -685,6 +890,23 @@ const DisturbanceEvaluation = () => {
         </div>
 
         <div className="ml-auto flex items-center gap-4">
+          {/* 项目保存/加载按钮 (优化3.3) */}
+          <button
+            onClick={() => projectFileInputRef.current?.click()}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 text-gray-300 rounded-lg hover:bg-gray-700 text-sm"
+            title="打开项目"
+          >
+            <FolderOpen size={14} /> 打开
+          </button>
+          <button
+            onClick={handleSaveProject}
+            disabled={boreholeCoords.length === 0 && workfaceCoords.length === 0}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 text-gray-300 rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            title="保存项目"
+          >
+            <Save size={14} /> 保存
+          </button>
+
           {results && (
             <>
               <button
@@ -756,18 +978,39 @@ const DisturbanceEvaluation = () => {
               </>
             )}
           </button>
+
+          {/* 计算进度条 (优化3.2) */}
+          {isLoading && calculationProgress.status === 'running' && (
+            <div className="mt-3 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                <span>{calculationProgress.message || '计算中...'}</span>
+                <span>{calculationProgress.percent || 0}%</span>
+              </div>
+              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                  style={{ width: `${calculationProgress.percent || 0}%` }}
+                />
+              </div>
+            </div>
+          )}
         </aside>
 
         {/* 中间可视化区域 */}
         <div className="flex-1 flex flex-col p-4">
-          <div className="flex-1 bg-gray-900/50 rounded-xl border border-gray-800 overflow-hidden relative">
+          <div
+            ref={heatmapContainerRef}
+            className="flex-1 bg-gray-900/50 rounded-xl border border-gray-800 overflow-hidden relative"
+            onMouseMove={handleHeatmapMouseMove}
+            onMouseLeave={handleHeatmapMouseLeave}
+          >
             {/* 后端图片模式 (高质量，默认) */}
             {useBackendImage && backendImage ? (
               <div className="w-full h-full flex items-center justify-center p-4 bg-white/5">
                 <img
                   src={`data:image/png;base64,${backendImage}`}
                   alt="ODI热力图"
-                  className="max-w-full max-h-full object-contain rounded shadow-lg"
+                  className="max-w-full max-h-full object-contain rounded shadow-lg pointer-events-none"
                   style={{
                     transform: `scale(${scale})`,
                     transition: 'transform 0.2s ease'
@@ -795,6 +1038,56 @@ const DisturbanceEvaluation = () => {
                 />
               </Suspense>
             ) : null}
+
+            {/* 鼠标悬停信息Tooltip (优化3.4) */}
+            {hoverInfo && hoverInfo.data && (
+              <div
+                className="fixed z-50 bg-gray-900/95 backdrop-blur border border-gray-600 rounded-lg p-3 shadow-xl pointer-events-none"
+                style={{
+                  left: hoverInfo.x + 15,
+                  top: hoverInfo.y - 10,
+                  minWidth: '180px'
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-3 h-3 rounded-full ${getODILevelInfo(hoverInfo.data.odi).color}`} />
+                  <span className="text-sm font-bold text-white">
+                    {getODILevelInfo(hoverInfo.data.odi).level}级 - {getODILevelInfo(hoverInfo.data.odi).text}
+                  </span>
+                </div>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">ODI值:</span>
+                    <span className="text-cyan-400 font-mono">{hoverInfo.data.odi?.toFixed(4)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">坐标:</span>
+                    <span className="text-gray-300 font-mono">
+                      ({hoverInfo.data.x?.toFixed(1)}, {hoverInfo.data.y?.toFixed(1)})
+                    </span>
+                  </div>
+                  {hoverInfo.data.geo_params && (
+                    <>
+                      <div className="border-t border-gray-700 my-1 pt-1">
+                        <span className="text-gray-500">地质参数</span>
+                      </div>
+                      {hoverInfo.data.geo_params.Ti && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Ti:</span>
+                          <span className="text-gray-300 font-mono">{hoverInfo.data.geo_params.Ti?.toFixed(2)}m</span>
+                        </div>
+                      )}
+                      {hoverInfo.data.geo_params.Hi && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Hi:</span>
+                          <span className="text-gray-300 font-mono">{hoverInfo.data.geo_params.Hi?.toFixed(2)}m</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
             {!results && (
               <div className="absolute inset-0 flex items-center justify-center">

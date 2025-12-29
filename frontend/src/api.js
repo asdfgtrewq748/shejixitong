@@ -515,5 +515,32 @@ export async function getHeatmapImage(field = 'odi_normalized', resolution = 500
   return apiGet(`/disturbance/heatmap/image?${params.toString()}`);
 }
 
+// ==================== 计算进度 API (优化3.2) ====================
+
+/**
+ * 获取计算进度
+ */
+export async function getCalculationProgress() {
+  return apiGet('/disturbance/calculate/progress');
+}
+
+// ==================== 项目保存/加载 API (优化3.3) ====================
+
+/**
+ * 保存项目到文件
+ */
+export async function saveProject(projectData) {
+  return apiPost('/disturbance/project/save', projectData);
+}
+
+/**
+ * 加载项目文件
+ */
+export async function loadProject(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiPostForm('/disturbance/project/load', formData);
+}
+
 // 导出ApiError类供外部使用
 export { ApiError };
