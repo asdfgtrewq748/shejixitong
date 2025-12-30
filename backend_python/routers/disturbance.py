@@ -1178,7 +1178,7 @@ async def get_heatmap_image(
 
         # 配置中文字体
         import matplotlib.pyplot as plt
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+        plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
         plt.rcParams['axes.unicode_minus'] = False
 
         from matplotlib.colors import ListedColormap, BoundaryNorm
@@ -1279,7 +1279,7 @@ async def get_heatmap_image(
             # 色标
             cbar_ax = fig.add_axes([0.70, 0.1, 0.02, 0.8])
             cbar = fig.colorbar(cf, cax=cbar_ax)
-            cbar.set_label('ODI', fontsize=12)
+            cbar.set_label('ODI (归一化扰动指数)', fontsize=12)
             cbar.set_ticks([0.0225, 0.195, 0.585, 0.836, 0.924])
             cbar.set_ticklabels(['I', 'II', 'III', 'IV', 'V'])
         else:
@@ -1291,10 +1291,10 @@ async def get_heatmap_image(
             cbar = fig.colorbar(cf, cax=cbar_ax)
 
             field_labels = {
-                "Ti": "Ti (m)",
-                "Hi": "Hi (m)",
-                "Di": "Di (m)",
-                "Mi": "Mi (m)",
+                "Ti": "Ti (米)",
+                "Hi": "Hi (米)",
+                "Di": "Di (米)",
+                "Mi": "Mi (米)",
                 "Ei": "Ei (GPa)"
             }
             cbar.set_label(field_labels.get(field, field), fontsize=12)
@@ -1307,21 +1307,21 @@ async def get_heatmap_image(
             ax.add_patch(workface_patch)
 
         # 设置坐标轴
-        ax.set_xlabel('X (m)', fontsize=12)
-        ax.set_ylabel('Y (m)', fontsize=12)
+        ax.set_xlabel('X (米)', fontsize=12)
+        ax.set_ylabel('Y (米)', fontsize=12)
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3, linestyle='--')
 
         # 标题
         field_titles = {
-            "odi_normalized": "ODI Distribution",
-            "odi": "ODI Distribution",
-            "Ti": "Ti Distribution",
-            "Hi": "Hi Distribution",
-            "Di": "Di Distribution",
-            "Mi": "Mi Distribution"
+            "odi_normalized": "ODI 分布图",
+            "odi": "ODI 分布图",
+            "Ti": "Ti 分布图",
+            "Hi": "Hi 分布图",
+            "Di": "Di 分布图",
+            "Mi": "Mi 分布图"
         }
-        ax.set_title(field_titles.get(field, f"{field} Distribution"), fontsize=14, fontweight='bold')
+        ax.set_title(field_titles.get(field, f"{field} 分布图"), fontsize=14, fontweight='bold')
 
         # ========== 右侧信息面板 ==========
         info_ax = fig.add_axes([0.75, 0.1, 0.22, 0.8])
@@ -1330,15 +1330,15 @@ async def get_heatmap_image(
         # 信息面板内容
         info_text = []
         info_text.append("=" * 25)
-        info_text.append("  STATISTICS")
+        info_text.append("  统计信息")
         info_text.append("=" * 25)
-        info_text.append(f"  Points: {stats['count']}")
-        info_text.append(f"  ODI Min: {stats['min']:.4f}")
-        info_text.append(f"  ODI Max: {stats['max']:.4f}")
-        info_text.append(f"  ODI Mean: {stats['mean']:.4f}")
+        info_text.append(f"  点数: {stats['count']}")
+        info_text.append(f"  ODI 最小值: {stats['min']:.4f}")
+        info_text.append(f"  ODI 最大值: {stats['max']:.4f}")
+        info_text.append(f"  ODI 平均值: {stats['mean']:.4f}")
         info_text.append("")
         info_text.append("=" * 25)
-        info_text.append("  LEVEL DISTRIBUTION")
+        info_text.append("  等级分布")
         info_text.append("=" * 25)
 
         level_info = [
@@ -1355,26 +1355,26 @@ async def get_heatmap_image(
             info_ax.add_patch(plt.Rectangle((0.02, y_pos - 0.02), 0.08, 0.04,
                                            facecolor=color, edgecolor='black', linewidth=0.5))
             info_ax.text(0.12, y_pos, f"{level_name}: {odi_range}", fontsize=9,
-                        verticalalignment='center', fontfamily='monospace')
+                        verticalalignment='center')
             info_ax.text(0.65, y_pos, f"{count} ({pct:.1f}%)", fontsize=9,
-                        verticalalignment='center', fontfamily='monospace')
+                        verticalalignment='center')
             y_pos -= 0.08
 
         # 添加ODI等级说明
         y_pos -= 0.05
-        info_ax.text(0.02, y_pos, "-" * 30, fontsize=8, fontfamily='monospace')
+        info_ax.text(0.02, y_pos, "-" * 30, fontsize=8)
         y_pos -= 0.05
-        info_ax.text(0.02, y_pos, "Level Meaning:", fontsize=9, fontweight='bold')
+        info_ax.text(0.02, y_pos, "等级含义:", fontsize=9, fontweight='bold')
         meanings = [
-            "I:  Minor disturbance",
-            "II: Weak disturbance",
-            "III: Moderate disturbance",
-            "IV: Strong disturbance",
-            "V:  Severe disturbance"
+            "I:  微扰动",
+            "II: 弱扰动",
+            "III: 中等扰动",
+            "IV: 强扰动",
+            "V:  剧烈扰动"
         ]
         for meaning in meanings:
             y_pos -= 0.05
-            info_ax.text(0.02, y_pos, meaning, fontsize=8, fontfamily='monospace')
+            info_ax.text(0.02, y_pos, meaning, fontsize=8)
 
         info_ax.set_xlim(0, 1)
         info_ax.set_ylim(0, 1)
